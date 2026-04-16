@@ -1,0 +1,188 @@
+Metadata-Version: 2.4
+Name: textcad
+Version: 0.1.0
+Summary: LangGraph-based Text2CAD research prototype
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: cadquery<3,>=2.7
+Requires-Dist: langchain-anthropic<2,>=1.1
+Requires-Dist: gmsh<5,>=4.15
+Requires-Dist: langchain<2,>=1.2
+Requires-Dist: langchain-openai<2,>=1.1
+Requires-Dist: langgraph<2,>=1.1
+Requires-Dist: meshio[all]<6,>=5.3
+Requires-Dist: python-dotenv<2,>=1.0
+Requires-Dist: pyvista<0.48,>=0.47
+Requires-Dist: sfepy<2027,>=2026.1
+Provides-Extra: dev
+Requires-Dist: pytest<9,>=8; extra == "dev"
+
+# TextCAD
+
+面向论文原型的 Text2CAD 单机研究系统。当前仓库只实现左侧生产链路：
+
+1. 用户自然语言需求进入 LangGraph 编排图
+2. `Clarify / Engineer / Design / QA` 节点负责规格澄清、结构化生成与反馈回路
+3. 本地工具链复用已跑通的 `CadQuery -> Gmsh -> SfePy -> PyVista`
+4. 右侧 `Math` 评测与微调模块暂不纳入本轮实现
+
+## 环境准备
+
+推荐沿用你已经验证过的 `textcad-mvp` 环境：
+
+```bash
+conda create -n textcad-mvp python=3.11 -y
+conda activate textcad-mvp
+pip install -e ".[dev]"
+```
+
+如果你希望显式保留此前的安装方式，也可以先安装底层几何/仿真依赖，再安装本项目：
+
+```bash
+conda install -c conda-forge cadquery=2.7 -y
+python -m pip install gmsh sfepy pyvista "meshio[all]"
+python -m pip install -e ".[dev]"
+```
+
+## 环境变量
+
+复制 `.env.example` 为 `.env`，按需填写：
+
+```bash
+cp .env.example .env
+```
+
+如果你只是想快速切实验配置，也可以直接复制现成模板：
+
+```bash
+cp configs/providers/qwen.env .env
+```
+
+- 不填任何模型凭证时，系统会自动退回 heuristic/mock 模式，适合本地结构验证
+- 默认内置模型是 OpenAI；填写 `OPENAI_API_KEY` 后，`Clarify / Design / Visual QA` 会优先使用真实模型
+- 现在支持“多提供商、分角色”配置：可以给 `Clarify / Design / Visual QA` 分别指定不同模型，也可以统一切到 OpenAI-compatible 端点
+
+### Qwen 示例
+
+如果你想把三个角色统一切到 Qwen（经 DashScope OpenAI-compatible 接口），可以这样配置：
+
+```bash
+TEXTCAD_DEFAULT_MODEL=qwen-max
+TEXTCAD_DEFAULT_PROVIDER=openai
+TEXTCAD_DEFAULT_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+TEXTCAD_DEFAULT_API_KEY=your-dashscope-key
+```
+
+如果你想混合使用不同模型，例如：
+
+- `Clarify` 用 `qwen-plus`
+- `Design` 用 `qwen-max`
+- `Visual QA` 继续用 OpenAI 多模态模型
+
+可以这样写：
+
+```bash
+TEXTCAD_CLARIFY_MODEL=qwen-plus
+TEXTCAD_CLARIFY_PROVIDER=openai
+TEXTCAD_CLARIFY_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+TEXTCAD_CLARIFY_API_KEY=your-dashscope-key
+
+TEXTCAD_DESIGN_MODEL=qwen-max
+TEXTCAD_DESIGN_PROVIDER=openai
+TEXTCAD_DESIGN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+TEXTCAD_DESIGN_API_KEY=your-dashscope-key
+
+OPENAI_API_KEY=your-openai-key
+TEXTCAD_VISUAL_MODEL=openai:gpt-4.1-mini
+```
+
+如果使用 Anthropic，也可以直接设置前缀模型名或 provider，例如：
+
+```bash
+ANTHROPIC_API_KEY=your-anthropic-key
+TEXTCAD_DESIGN_MODEL=anthropic:claude-sonnet-4-5
+```
+
+## 目录结构
+
+```text
+textcad_agent/
+  state.py       # schema 与 LangGraph state
+  tools.py       # 本地执行工具与运行目录管理
+  nodes.py       # graph node 逻辑
+  agent.py       # graph 构建入口
+mvp/
+  1_build_cad.py
+  2_build_mesh.py
+  3_solve_fea.py
+runs/
+  <run_id>/<iteration>/
+```
+
+## 使用方式
+
+最小调用示例：
+
+```python
+from textcad_agent.agent import create_agent
+
+app = create_agent()
+result = app.invoke(
+    {
+        "user_prompt": "设计一个长 20mm、宽 40mm、高 40mm 的悬臂梁，左端固定，右端承受向下 1N 载荷。"
+    }
+)
+
+print(result["final_status"])
+print(result["feedback_history"])
+```
+
+命令行方式更适合论文实验记录：
+
+```bash
+textcad-run "设计一个长 20mm、宽 40mm、高 40mm 的悬臂梁，左端固定，右端承受向下 1N 载荷。"
+```
+
+如果你想保留完整状态输出，便于实验日志落档：
+
+```bash
+textcad-run --json "设计一个带孔支架，要求右端受向下 5N 载荷。"
+```
+
+推荐的 provider 切换流程：
+
+```bash
+cp configs/providers/openai.env .env
+textcad-run "设计一个测试梁"
+
+cp configs/providers/qwen.env .env
+textcad-run "设计一个测试梁"
+
+cp configs/providers/hybrid.env .env
+textcad-run "设计一个测试梁"
+```
+
+运行过程中，每一轮都会写入 `runs/<run_id>/<iteration>/`，其中包含：
+
+- `generated_model.py`
+- `analysis_config.json`
+- `model.step`
+- `model.stl`
+- `model.msh`
+- `fea_result.vtk`
+- `renders/*.png`
+
+## 说明
+
+- `mvp/` 仍然是唯一物理执行后端，Agent 层不会覆盖这些文件
+- `visual_qa` 在无多模态模型时会退回本地 heuristic judge，仅用于流程联调
+- 当前 `physics_qa` 强制使用 `max_disp_mm` 作为 gating 指标；`max_stress_mpa` 保留接口，但底层结果若未提供则不会阻塞流程
+- `AgentRuntime` 的模型接入层支持 OpenAI、Anthropic，以及任何 OpenAI-compatible 端点（例如 Qwen/DashScope）
+- `configs/providers/` 提供了 `openai / qwen / hybrid` 三套实验模板，适合做论文中的多模型对比
+- 三个系统级提示词已抽离到 `textcad_agent/prompts/`，便于论文中单独描述 prompt 设计与后续版本管理
+
+## 测试
+
+```bash
+pytest tests
+```

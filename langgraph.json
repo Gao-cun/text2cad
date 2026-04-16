@@ -1,0 +1,9 @@
+{
+  "dependencies": [
+    "."
+  ],
+  "graphs": {
+    "textcad_production": "./textcad_agent/agent.py:create_agent"
+  },
+  "env": "./.env"
+}

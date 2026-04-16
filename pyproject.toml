@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "textcad"
+version = "0.1.0"
+description = "LangGraph-based Text2CAD research prototype"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "cadquery>=2.7,<3",
+  "langchain-anthropic>=1.1,<2",
+  "gmsh>=4.15,<5",
+  "langchain>=1.2,<2",
+  "langchain-openai>=1.1,<2",
+  "langgraph>=1.1,<2",
+  "meshio[all]>=5.3,<6",
+  "python-dotenv>=1.0,<2",
+  "pyvista>=0.47,<0.48",
+  "sfepy>=2026.1,<2027",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<9",
+]
+
+[project.scripts]
+textcad-run = "textcad_agent.run:main"
+
+[tool.setuptools.packages.find]
+include = ["textcad_agent*"]
+
+[tool.setuptools.package-data]
+"textcad_agent.prompts" = ["*.txt"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

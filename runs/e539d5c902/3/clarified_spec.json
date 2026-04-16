@@ -1,0 +1,57 @@
+{
+  "request_summary": "设计一个用于竖屏观看视频的桌面手机支架，要求结构简洁且易于3D打印。",
+  "object_type": "phone_stand",
+  "design_brief": "创建一个L型或三角支撑结构的手机支架，背部有倾斜角度以适合观看视频，底部有防滑设计或足够摩擦力，前方有托举手机的挡边。整体造型简约，减少悬空结构以降低打印难度。",
+  "design_goals": [
+    "稳定性：确保放置手机后不倾倒",
+    "兼容性：适应主流智能手机尺寸",
+    "可制造性：无需支撑或极少支撑即可打印",
+    "人体工学：提供舒适的观看视角（约60度倾角）"
+  ],
+  "style_keywords": [
+    "minimalist",
+    "functional",
+    "geometric",
+    "clean_lines"
+  ],
+  "length_mm": 80.0,
+  "width_mm": 75.0,
+  "height_mm": 120.0,
+  "unit_system": "mm",
+  "material_name": "PLA",
+  "material_young_mpa": 3500.0,
+  "material_poisson": 0.35,
+  "fixed_boundary": [
+    0.0,
+    -37.5,
+    -60.0,
+    0.0,
+    37.5,
+    60.0
+  ],
+  "load_boundary": [
+    80.0,
+    -37.5,
+    -60.0,
+    80.0,
+    37.5,
+    60.0
+  ],
+  "load_vector_n": [
+    0.0,
+    -2.0,
+    -1.0
+  ],
+  "bbox_tol": 0.2,
+  "missing_high_risk_fields": [],
+  "assumptions": [
+    "假设手机重量约为200g-250g",
+    "假设手机宽度在70-78mm之间",
+    "假设打印材料为标准PLA，层高0.2mm",
+    "假设桌面为水平刚性平面",
+    "默认倾角为60度以优化视频观看体验"
+  ],
+  "visual_requirements": [
+    "表面光滑，边缘倒角处理以提升手感，无复杂纹理，整体呈现现代简约风格。"
+  ]
+}

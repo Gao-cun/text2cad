@@ -1,0 +1,12 @@
+{
+  "pass": false,
+  "issues": [
+    "Remote visual QA failed via model=qwen-vl-max: 5 validation errors for VisualReview\nrecommended_edits.0\n  Input should be a valid string [type=string_type, input_value={'defect': '几何体不...并为单一体积。'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/string_type\nrecommended_edits.1\n  Input should be a valid string [type=string_type, input_value={'defect': '缺乏手机...宽度（70-78mm）。'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/string_type\nrecommended_edits.2\n  Input should be a valid string [type=string_type, input_value={'defect': '无稳定底...并提升稳定性。'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/string_type\nrecommended_edits.3\n  Input should be a valid string [type=string_type, input_value={'defect': '未实现60...rotate`命令实现。'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/string_type\nrecommended_edits.4\n  Input should be a valid string [type=string_type, input_value={'defect': '边缘锐利...触感和美观性。'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/string_type"
+  ],
+  "missing_requirements": [],
+  "recommended_edits": [
+    "修复远程 VLM 调用或输出解析问题后，再重新执行视觉审查。"
+  ],
+  "backend": "heuristic_fallback",
+  "fallback_reason": "Remote visual QA failed via model=qwen-vl-max: 5 validation errors for VisualReview\nrecommended_edits.0\n  Input should be a valid string [type=string_type, input_value={'defect': '几何体不...并为单一体积。'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/string_type\nrecommended_edits.1\n  Input should be a valid string [type=string_type, input_value={'defect': '缺乏手机...宽度（70-78mm）。'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/string_type\nrecommended_edits.2\n  Input should be a valid string [type=string_type, input_value={'defect': '无稳定底...并提升稳定性。'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/string_type\nrecommended_edits.3\n  Input should be a valid string [type=string_type, input_value={'defect': '未实现60...rotate`命令实现。'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/string_type\nrecommended_edits.4\n  Input should be a valid string [type=string_type, input_value={'defect': '边缘锐利...触感和美观性。'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/string_type"
+}

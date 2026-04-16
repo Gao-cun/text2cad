@@ -1,0 +1,56 @@
+{
+  "request_summary": "设计一个高度约150mm的圆筒形笔筒，用于桌面文具收纳",
+  "object_type": "笔筒",
+  "design_brief": "圆柱形容器，底部封闭，顶部开放，侧壁均匀厚度，适用于存放标准书写工具",
+  "design_goals": [
+    "结构稳定性",
+    "制造可行性",
+    "容量优化",
+    "表面光洁度"
+  ],
+  "style_keywords": [
+    "简约",
+    "现代",
+    "实用主义",
+    "几何对称"
+  ],
+  "length_mm": 80.0,
+  "width_mm": 80.0,
+  "height_mm": 150.0,
+  "unit_system": "mm",
+  "material_name": "PLA",
+  "material_young_mpa": 3500.0,
+  "material_poisson": 0.35,
+  "fixed_boundary": [
+    0.0,
+    -40.0,
+    -75.0,
+    0.0,
+    40.0,
+    75.0
+  ],
+  "load_boundary": [
+    80.0,
+    -40.0,
+    -75.0,
+    80.0,
+    40.0,
+    75.0
+  ],
+  "load_vector_n": [
+    0.0,
+    0.0,
+    -5.0
+  ],
+  "bbox_tol": 0.5,
+  "missing_high_risk_fields": [],
+  "assumptions": [
+    "默认壁厚3mm",
+    "底部厚度5mm增强稳定性",
+    "无内部隔断结构",
+    "适配直径≤15mm的笔类物品"
+  ],
+  "visual_requirements": [
+    "外表面光滑无层纹，顶部边缘倒角R2，底部防滑纹理可选，支持单色打印"
+  ]
+}

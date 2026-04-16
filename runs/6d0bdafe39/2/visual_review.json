@@ -1,0 +1,12 @@
+{
+  "pass": false,
+  "issues": [
+    "Remote visual QA failed via model=qwen-vl-max: 4 validation errors for VisualReview\nrecommended_edits.0\n  Input should be a valid string [type=string_type, input_value={'defect': '缺少车身...车轮位置对齐。'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/string_type\nrecommended_edits.1\n  Input should be a valid string [type=string_type, input_value={'defect': '车轮数量...实现对称布局。'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/string_type\nrecommended_edits.2\n  Input should be a valid string [type=string_type, input_value={'defect': '无车窗或...玻璃斜面轮廓。'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/string_type\nrecommended_edits.3\n  Input should be a valid string [type=string_type, input_value={'defect': '结构不完...打印后可组装。'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/string_type"
+  ],
+  "missing_requirements": [],
+  "recommended_edits": [
+    "修复远程 VLM 调用或输出解析问题后，再重新执行视觉审查。"
+  ],
+  "backend": "heuristic_fallback",
+  "fallback_reason": "Remote visual QA failed via model=qwen-vl-max: 4 validation errors for VisualReview\nrecommended_edits.0\n  Input should be a valid string [type=string_type, input_value={'defect': '缺少车身...车轮位置对齐。'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/string_type\nrecommended_edits.1\n  Input should be a valid string [type=string_type, input_value={'defect': '车轮数量...实现对称布局。'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/string_type\nrecommended_edits.2\n  Input should be a valid string [type=string_type, input_value={'defect': '无车窗或...玻璃斜面轮廓。'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/string_type\nrecommended_edits.3\n  Input should be a valid string [type=string_type, input_value={'defect': '结构不完...打印后可组装。'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/string_type"
+}

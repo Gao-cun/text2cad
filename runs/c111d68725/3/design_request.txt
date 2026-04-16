@@ -1,0 +1,187 @@
+工程基线说明
+- 原始需求：我要一个桌面手机支架，适合竖放看视频，结构尽量简洁，方便 3D 打印。
+- 设计摘要：一个可3D打印的桌面手机支架，包含后倾支撑背板、承托底座和前挡边。
+- 对象类型：phone_stand
+- 目标尺寸（mm）：长 95.00，宽 78.00，高 110.00
+- 材料：PLA，杨氏模量 3500.00 MPa，泊松比 0.36
+- 固定边界盒：[0.0, -39.0, -55.0, 0.0, 39.0, 55.0]
+- 加载边界盒：[95.0, -39.0, -55.0, 95.0, 39.0, 55.0]
+- 试探载荷向量（N）：[0.0, -1.0, 0.0]
+- 设计目标：稳定承托手机; 结构连续、便于打印; 正面留出可视区域，避免完全遮挡设备
+- 风格关键词：clean, minimal, functional
+- 视觉要求：应有明显后倾支撑面; 前端应有挡边避免手机滑落; 整体应像桌面手机支架而非实心方块
+- 默认假设：未指定设备尺寸时，按常见 6 到 6.7 英寸手机估算支架比例。; 默认采用一体式打印结构，优先保证支撑和可打印性。; 未识别到明确尺寸，按 phone_stand 的默认比例生成 95x78x110 mm。; 未识别到受力信息时，力学审查阶段默认在 +X 端面施加向下 1N 试探载荷。; 未单独指定分析边界时，默认采用模型在 X 方向的首尾端面做固定端和加载端。
+- 约束：必须生成可执行的 CadQuery 代码，几何应可网格化、可渲染、可进入后续力学和视觉审查。
+
+硬性修改约束
+- 必须输出可执行 CadQuery 代码，并保留 build_model()/build()/make_model() 或 MODEL/model 入口。
+- 不允许退化成无语义方块，除非用户需求本身就是简单实体。
+- 优先保留上一轮已经正确的结构，只修复当前明确指出的问题。
+
+上一轮代码
+```python
+import cadquery as cq
+import math
+
+def build_model():
+    """
+    构建一个简洁的、适合3D打印的桌面手机支架。
+    修复了上一轮代码中的语法错误（未闭合的括号）和逻辑冗余。
+    采用侧面轮廓拉伸法，确保几何体 manifold 且结构连续。
+    """
+    
+    # --- 参数定义 ---
+    total_height = 110.0
+    total_width = 78.0
+    target_depth = 95.0
+    thickness = 4.0      # 基础壁厚/特征尺寸
+    back_angle_deg = 75.0 # 背板与水平面夹角
+    front_lip_height = 12.0 # 前挡边高度
+    slot_depth = 8.0     # 前挡边内侧凹槽深度
+    
+    # --- 几何计算 ---
+    angle_rad = math.radians(back_angle_deg)
+    
+    # 背板几何推导
+    # 假设背板内表面（接触手机面）底部起始点相对于底座后缘的位置
+    # 为了让背板底部不向后突出太多导致重心不稳或超出边界，
+    # 我们设定背板外表面底部对齐到底座后缘 (X=0) 或略微靠前。
+    # 这里采用：背板外表面底部位于 X=0, Z=0 (与底座后下角重合)
+    # 但为了制造方便和强度，通常背板是立在底座上的。
+    # 让我们采用更稳健的“落地”设计：
+    # 1. 底座是一个矩形块。
+    # 2. 背板从底座后部向上延伸。
+    
+    # 重新规划轮廓点 (X: 深度, Z: 高度)，原点 (0,0) 为底座后下角
+    # 目标：总长 ~95mm, 总高 ~110mm
+    
+    # 背板厚度
+    t_back = 4.0
+    
+    # 计算背板顶部坐标
+    # 设背板内表面底部起点为 (x_start_in, z_start_in)
+    # 设背板外表面底部起点为 (x_start_out, z_start_out)
+    
+    # 简化策略：
+    # 底座部分：X from 0 to Base_Len, Z from 0 to Base_Thick
+    # 背板部分：附着在底座后部。
+    
+    # 为了保证总长不超过 95，且背板角度 75度：
+    # 背板高度 H = 110. 
+    # 背板水平投影长度 L_proj = H / tan(75) ≈ 110 / 3.73 ≈ 29.5 mm.
+    # 如果背板顶部在最前端，那么底座只需要很短？
+    # 不，手机需要放在中间。
+    
+    # 让我们定义关键点：
+    # P1: (0, 0) - 底座后下
+    # P2: (target_depth, 0) - 底座前下
+    # P3: (target_depth, front_lip_height) - 前挡边外上
+    # P4: (target_depth - slot_depth, front_lip_height) - 前挡边内上
+    
+    # 背板顶部点 P5 (内表面): 
+    # 我们希望手机能靠在背板上。背板内表面应该是一条直线。
+    # 这条直线的底部在哪里？
+    # 如果背板直接连到底座后缘 (0,0)，那么背板内表面起点是 (0,0) 吗？
+    # 如果起点是 (0,0)，角度 75度，则顶部 X = 110/tan(75) ≈ 29.5.
+    # 此时背板外表面起点呢？
+    # 如果背板是均匀厚度 4mm，外表面起点将在 (-dx, -dz)。
+    # cos(75+90) = cos(165) < 0. 所以会向后突出。
+    
+    # 修正：让背板外表面垂直于地面切削，或者调整底座长度以容纳突出部分。
+    # 为了符合“简洁”和“可打印”，我们允许背板底部有少量突出，并调整底座长度使总长为 95。
+    
+    # 计算背板法向偏移
+    # 背板向量 (沿内表面向上): V = (cos(90-75), sin(90-75))? 
+    # 角度是与水平面夹角 75。所以与 X 轴夹角 75? 不，Z 是垂直。
+    # 在 XZ 平面，线与 X 轴夹角 75 度是不对的，那是与垂直线夹角 15 度。
+    # 线与 X 轴（水平）夹角 75 度意味着它很陡。
+    # dx = dz / tan(75).
+    
+    h_eff = total_height
+    dx_proj = h_eff / math.tan(angle_rad)
+    
+    # 背板内表面顶部: (dx_proj, total_height)
+    # 背板内表面底部: (0, 0) -> 这样背板会切入底座内部，Union 后没问题，但物理上背板是从底座里长出来的。
+    # 为了更好的结构，让背板内表面底部从 (0, thickness) 开始？
+    # 如果从 (0, thickness) 开始，手机底部会悬空 thickness 高度。
+    # 前挡边高度 12mm > 4mm，所以手机不会滑落，且底部有支撑（如果底座延伸过去）。
+    # 但我们的轮廓是实心的，所以 (0,0) 到 (0, thickness) 是背板的后端垂直面？
+    
+    # 最终轮廓点序列 (X, Z):
+    pts = [
+        (0, 0),                         # 1. 底座后下 (也是背板外表面底部的参考点附近)
+        (target_depth, 0),              # 2. 底座前下
+        (target_depth, front_lip_height), # 3. 前挡边外上
+        (target_depth - slot_depth, front_lip_height), # 4. 前挡边内上 (手机槽底)
+        (dx_proj, total_height),        # 5. 背板内表面顶部
+        (0, thickness),                 # 6. 背板内表面底部 (假设背板从这里开始斜向上)
+                                        # 注意：如果 dx_proj 对应的是从 X=0 开始的投影，
+                                        # 那么点 5 的 X 是 dx_proj。点 6 的 X 是 0。
+                                        # 这定义了背板内表面。
+        # 现在需要闭合到背板外表面
+        # 背板外表面顶部 (点 7):
+        # 从点 5 沿法线方向偏移 t_back
+        # 法线角度: 75 + 90 = 165 度 (从 X 轴正向逆时针)
+        # Nx = cos(165), Nz = sin(165)
+        nx = math.cos(math.radians(165))
+        nz = math.sin(math.radians(165))
+        
+        p7_x = dx_proj + t_back * nx
+        p7_z = total_height + t_back * nz
+        
+        (p7_x, p7_z),                   # 7. 背板外表面顶部
+        
+        # 背板外表面底部 (点 8):
+        # 从点 6 (0, thickness) 沿法线方向偏移 t_back
+        p8_x = 0 + t_back * nx
+        p8_z = thickness + t_back * nz
+        
+        (p8_x, p8_z),                   # 8. 背板外表面底部
+        (0, 0)                          # 回到起点
+    ]
+    
+    # 检查边界:
+    # p8_x = 4 * cos(165) ≈ -3.86.
+    # 这意味着模型在 X 负方向有延伸。
+    # 为了满足“固定边界盒 [0.0...]”以及常规习惯，我们将整个模型平移，使最小 X 为 0。
+    
+    profile = cq.Workplane("XZ").polyline(pts).close()
+    stand_body = profile.extrude(total_width)
+    
+    # 居中 Y 轴
+    stand_body = stand_body.translate((0, -total_width/2, 0))
+    
+    # 平移模型使 X 最小值为 0
+    bb = stand_body.val().BoundingBox()
+    min_x = bb.min.X
+    if min_x < 0:
+        stand_body = stand_body.translate((-min_x, 0, 0))
+    
+    # 可选：添加圆角以增加美观和强度
+    # 对前挡边顶部边缘倒圆角
+    try:
+        # 选择前挡边顶部的两条长边 (Y 方向)
+        # 这里的 selector 可能需要根据具体几何调整，简单起见尝试 fillet 所有垂直边缘的小部分?
+        # 更安全的方式：不自动 fillet，或者只 fillet 明显的锐角
+        stand_body = stand_body.edges(">Z and |Y").fillet(1.5)
+    except Exception:
+        pass
+        
+    return stand_body
+
+def build():
+    return build_model()
+
+def make_model():
+    return build_model()
+
+MODEL = build_model()
+```
+
+本轮修复摘要
+工具执行失败（static_validate）：CAD 代码语法错误: invalid syntax. Maybe you meant '==' or ':=' instead of '='? (line 104)
+
+输出要求
+只返回一个 json object。顶层字段必须使用这些名字：cadquery_code, analysis_config, render_config, self_check_notes。
+self_check_notes 中必须说明本轮修改点、仍未满足项和任何阻碍。
+原始需求参考：我要一个桌面手机支架，适合竖放看视频，结构尽量简洁，方便 3D 打印。

@@ -1,0 +1,57 @@
+{
+  "request_summary": "我要一个桌面手机支架，适合竖放看视频，结构尽量简洁，方便 3D 打印。",
+  "object_type": "phone_stand",
+  "design_brief": "一个可3D打印的桌面手机支架，包含后倾支撑背板、承托底座和前挡边。",
+  "design_goals": [
+    "稳定承托手机",
+    "结构连续、便于打印",
+    "正面留出可视区域，避免完全遮挡设备"
+  ],
+  "style_keywords": [
+    "clean",
+    "minimal",
+    "functional"
+  ],
+  "length_mm": 95.0,
+  "width_mm": 78.0,
+  "height_mm": 110.0,
+  "unit_system": "mm",
+  "material_name": "PLA",
+  "material_young_mpa": 3500.0,
+  "material_poisson": 0.36,
+  "fixed_boundary": [
+    0.0,
+    -39.0,
+    -55.0,
+    0.0,
+    39.0,
+    55.0
+  ],
+  "load_boundary": [
+    95.0,
+    -39.0,
+    -55.0,
+    95.0,
+    39.0,
+    55.0
+  ],
+  "load_vector_n": [
+    0.0,
+    -1.0,
+    0.0
+  ],
+  "bbox_tol": 0.2,
+  "missing_high_risk_fields": [],
+  "assumptions": [
+    "未指定设备尺寸时，按常见 6 到 6.7 英寸手机估算支架比例。",
+    "默认采用一体式打印结构，优先保证支撑和可打印性。",
+    "未识别到明确尺寸，按 phone_stand 的默认比例生成 95x78x110 mm。",
+    "未识别到受力信息时，力学审查阶段默认在 +X 端面施加向下 1N 试探载荷。",
+    "未单独指定分析边界时，默认采用模型在 X 方向的首尾端面做固定端和加载端。"
+  ],
+  "visual_requirements": [
+    "应有明显后倾支撑面",
+    "前端应有挡边避免手机滑落",
+    "整体应像桌面手机支架而非实心方块"
+  ]
+}

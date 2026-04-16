@@ -1,0 +1,56 @@
+{
+  "request_summary": "用户请求生成一个普通小汽车的3D打印模型，未指定具体车型或尺寸，需按标准玩具比例进行默认参数补全。",
+  "object_type": "vehicle_toy",
+  "design_brief": "设计一个简化的四门轿车模型，适用于FDM或SLA 3D打印。模型应包含车身主体、四个车轮及基本车窗轮廓。结构上保持整体性或简单的插接结构，确保打印稳定性。外观追求简洁流畅，无过多复杂细节以降低打印失败率。",
+  "design_goals": [
+    "确保模型在常规桌面级3D打印机上可成功打印",
+    "保持比例协调，符合大众对'小汽车'的认知",
+    "结构稳固，避免悬空部分过多导致支撑难以去除"
+  ],
+  "style_keywords": [
+    "sedan",
+    "minimalist",
+    "toy-grade",
+    "smooth surfaces",
+    "low-poly friendly"
+  ],
+  "length_mm": 120.0,
+  "width_mm": 50.0,
+  "height_mm": 35.0,
+  "unit_system": "mm",
+  "material_name": "PLA",
+  "material_young_mpa": 3500.0,
+  "material_poisson": 0.36,
+  "fixed_boundary": [
+    0.0,
+    -25.0,
+    -17.5,
+    0.0,
+    25.0,
+    17.5
+  ],
+  "load_boundary": [
+    120.0,
+    -25.0,
+    -17.5,
+    120.0,
+    25.0,
+    17.5
+  ],
+  "load_vector_n": [
+    0.0,
+    0.0,
+    -10.0
+  ],
+  "bbox_tol": 0.2,
+  "missing_high_risk_fields": [],
+  "assumptions": [
+    "假设为静态展示模型，非功能性遥控车底盘",
+    "假设车轮与车身为一体打印或简单过盈配合，此处按一体式简化处理以保证完整性",
+    "假设用户拥有标准桌面级3D打印机，打印精度为0.2mm层厚",
+    "默认尺寸为适合手持把玩的玩具大小"
+  ],
+  "visual_requirements": [
+    "车身表面光滑，车窗区域可通过几何凹陷或不同颜色材质区分（若多色打印），车轮应有基本轮胎纹理，整体造型圆润无尖锐棱角。"
+  ]
+}
