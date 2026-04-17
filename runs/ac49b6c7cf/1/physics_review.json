@@ -1,0 +1,11 @@
+{
+  "pass": false,
+  "max_disp_mm": 5.025940457035565,
+  "max_stress_mpa": null,
+  "violations": [
+    "最大位移 5.026 mm 超过阈值 5.000 mm。"
+  ],
+  "recommended_edits": [
+    "增加支撑区域厚度、缩短悬臂长度，或降低载荷。"
+  ]
+}

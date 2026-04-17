@@ -1,0 +1,35 @@
+工具执行失败（build_mesh）：Command failed with exit code 1: /opt/anaconda3/envs/textcad-mvp/bin/python -c 
+import runpy
+import sys
+from pathlib import Path
+
+workspace = Path('/Users/zhaowenhao/code/textcad/runs/35fefdf9da/1')
+sys.path.insert(0, str(workspace))
+runpy.run_path('/Users/zhaowenhao/code/textcad/mvp/2_build_mesh.py', run_name="__main__")
+
+Info    :  - Label 'Shapes/Open CASCADE STEP translator 7.8 1' (3D)
+
+Traceback (most recent call last):
+  File "<string>", line 8, in <module>
+  File "<frozen runpy>", line 291, in run_path
+  File "<frozen runpy>", line 98, in _run_module_code
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/zhaowenhao/code/textcad/mvp/2_build_mesh.py", line 67, in <module>
+    main()
+  File "/Users/zhaowenhao/code/textcad/mvp/2_build_mesh.py", line 47, in main
+    fixed_face = find_single_face(config.fixed_x, "fixed")
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/zhaowenhao/code/textcad/mvp/2_build_mesh.py", line 18, in find_single_face
+    raise RuntimeError(f"Failed to find {name} face near x={x_value}.")
+RuntimeError: Failed to find fixed face near x=0.0.
+力学分析报告：【关键数值】
+最大位移：无（求解中断）
+最大冯·米塞斯应力：无（求解中断）
+测试上下文：底座全固支，支撑板顶部施加5N Y向载荷，材料设定为PLA（弹性模量3500MPa）。
+
+【风险判断】
+阻断/失败。因CAD几何拓扑或网格划分异常导致求解器未返回有效数据，当前无法评估结构刚度与PLA屈服强度（30~50MPa）安全裕度，必须优先修复几何有效性。
+
+【代码级修改建议】
+1. 在CadQuery脚本中增加几何有效性预检，确保底座与60°倾斜支撑板的融合操作生成的是单一水密实体（Solid），彻底消除非流形边、重叠面或零厚度区域，以通过网格划分器的前置检查。
+2. 审查 fillet(radius=3) 的边选择逻辑：若圆角操作导致相邻面自相交或网格严重畸变，请改用 chamfer() 或分步构建（先拉伸主体再执行倒角），并将局部壁厚参数从3mm临时上调至3.5mm以改善网格质量，修复后重新提交求解。

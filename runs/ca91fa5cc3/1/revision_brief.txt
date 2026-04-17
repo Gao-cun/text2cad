@@ -1,0 +1,22 @@
+视觉审查未通过：Remote visual QA failed via model=qwen3-vl-plus: 7 validation errors for VisualReview
+issues.0
+  Input should be a valid string [type=string_type, input_value={'severity': 'high', 'des...无垂直支撑面。'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.13/v/string_type
+issues.1
+  Input should be a valid string [type=string_type, input_value={'severity': 'medium', 'd...底座长度比例。'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.13/v/string_type
+issues.2
+  Input should be a valid string [type=string_type, input_value={'severity': 'medium', 'd...提升稳定力臂。'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.13/v/string_type
+recommended_edits.0
+  Input should be a valid string [type=string_type, input_value={'target_feature': '顶...能完整’原则。'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.13/v/string_type
+recommended_edits.1
+  Input should be a valid string [type=string_type, input_value={'target_feature': '背...致打印不稳定。'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.13/v/string_type
+recommended_edits.2
+  Input should be a valid string [type=string_type, input_value={'target_feature': '底...主底面共面）。'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.13/v/string_type
+recommended_edits.3
+  Input should be a valid string [type=string_type, input_value={'target_feature': '边...与打印成功率。'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.13/v/string_type；修复远程 VLM 调用或输出解析问题后，再重新执行视觉审查。

@@ -1,0 +1,13 @@
+视觉审查未通过：Remote visual QA failed via model=qwen3-vl-plus: 4 validation errors for VisualReview
+issues.0
+  Input should be a valid string [type=string_type, input_value={'severity': 'high', 'des...覆盖重心垂足。'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.13/v/string_type
+issues.1
+  Input should be a valid string [type=string_type, input_value={'severity': 'high', 'des...适配不同机型。'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.13/v/string_type
+issues.2
+  Input should be a valid string [type=string_type, input_value={'severity': 'medium', 'd...座保证稳定性。'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.13/v/string_type
+issues.3
+  Input should be a valid string [type=string_type, input_value={'severity': 'medium', 'd...、前挡边顶端。'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.13/v/string_type；修复远程 VLM 调用或输出解析问题后，再重新执行视觉审查。

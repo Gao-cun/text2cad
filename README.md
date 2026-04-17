@@ -89,6 +89,32 @@ TEXTCAD_VISUAL_MAX_PIXELS=1310720
 - `TEXTCAD_VISUAL_MAX_IMAGES`：单次视觉审查最多发送的截图数量，默认 3 张
 - `TEXTCAD_VISUAL_MAX_PIXELS`：发送给 DashScope/Qwen 的单张图像像素上限，用于降低延迟和 token 开销
 
+循环与思考模式相关参数：
+
+```bash
+TEXTCAD_MAX_ITERATIONS=3
+TEXTCAD_BATCH_MAX_WORKERS=4
+
+TEXTCAD_DEFAULT_ENABLE_THINKING=false
+TEXTCAD_DEFAULT_THINKING_TIMEOUT_S=1200
+
+# 可按角色覆盖
+TEXTCAD_CLARIFY_ENABLE_THINKING=false
+TEXTCAD_DESIGN_ENABLE_THINKING=false
+TEXTCAD_VISUAL_ENABLE_THINKING=false
+
+TEXTCAD_CLARIFY_THINKING_TIMEOUT_S=1200
+TEXTCAD_DESIGN_THINKING_TIMEOUT_S=1200
+TEXTCAD_VISUAL_THINKING_TIMEOUT_S=1200
+```
+
+- `TEXTCAD_MAX_ITERATIONS`：控制 `feedback_merge -> decide_next` 回环最大轮数
+- `TEXTCAD_BATCH_MAX_WORKERS`：`--tasks-file` 并行批任务的默认线程数（可被 `--parallel-workers` 覆盖）
+- `*_ENABLE_THINKING`：控制是否向模型透传 `enable_thinking`
+- `*_ENABLE_THINKING=true` 时优先使用 `*_THINKING_TIMEOUT_S`
+- `*_ENABLE_THINKING=true` 且未设置角色级超时时，使用 `TEXTCAD_DEFAULT_THINKING_TIMEOUT_S`
+- `*_ENABLE_THINKING=true` 且以上都未设置时，默认兜底 `1200s`
+
 如果使用 Anthropic，也可以直接设置前缀模型名或 provider，例如：
 
 ```bash
@@ -142,6 +168,15 @@ textcad-run --json "我要一个桌面手机支架，适合竖放看视频，结
 textcad-run "设计一个长 20mm、宽 40mm、高 40mm 的悬臂梁，左端固定，右端承受向下 1N 载荷。"
 ```
 
+批量并行任务（txt 每行一个需求）示例：
+
+```bash
+textcad-run --tasks-file tasks.txt --parallel-workers 4
+```
+
+- `tasks.txt` 中空行和以 `#` 开头的注释行会被自动忽略
+- 批量模式会同步等待全部任务完成，并在终端输出任务级进度条
+
 默认情况下，每次 `textcad-run` 都会使用新的 `thread_id`，避免不同命令之间串联上一次的反馈历史。只有在你显式传入 `--thread-id` 时，才会复用同一条 LangGraph 线程。
 
 如果你想保留完整状态输出，便于实验日志落档：
@@ -176,8 +211,9 @@ textcad-run "设计一个测试梁"
 - `model.step`
 - `model.stl`
 - `model.msh`
-- `fea_result.vtk`
+- `fea_result.vtk`（每轮迭代独立保留，不会互相覆盖）
 - `renders/*.png`
+- `renders/render_scale.json`（记录 bounds 与 X/Y/Z 尺寸，截图本身也带尺度标注）
 
 ## 执行流程
 
@@ -245,6 +281,7 @@ textcad-run "设计一个测试梁"
    - 当前至少使用 `max_disp_mm` 做硬阈值判断；如果未来有稳定的 stress 输出，也会联合 `max_stress_mpa` 一起判断。
    - `physics_report` 会把数值结果转成一段自然语言工程审查报告，作为下一轮修复输入的一部分。
    - `visual_qa` 优先调用 VLM/多模态模型，对渲染截图做语义审查。
+   - 视觉结果支持解析 `is_present`；当 VLM 明确返回 `is_present=true` 时，系统会提前结束迭代回环。
    - `revision_brief` 只汇总**当前轮**工具失败、力学报告和视觉问题，生成简洁修复摘要。
    - 但当前实现有一个很重要的兼容策略：
      - 如果你只配置了共享的 OpenAI-compatible 文本模型，例如把 Qwen 作为 `TEXTCAD_DEFAULT_*`

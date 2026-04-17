@@ -1,0 +1,9 @@
+{
+  "pass": true,
+  "is_present": null,
+  "issues": [],
+  "missing_requirements": [],
+  "recommended_edits": [],
+  "backend": "heuristic_fallback",
+  "fallback_reason": null
+}

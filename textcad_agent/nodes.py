@@ -136,6 +136,7 @@ def make_ingest_request_node():
             "iteration": 1,
             "feedback_history": [],
             "tool_logs": {},
+            "vtk_paths": [],
             "assumptions": [],
             "engineering_prompt": "",
             "design_request": "",
@@ -485,6 +486,10 @@ def make_solve_fea_node():
             result = solve_fea.invoke({"workspace_path": state["workspace_path"]})
             status = CompileStatus(stage="solve_fea", success=True)
             log = "\n".join(item for item in [result.get("stdout", ""), result.get("stderr", "")] if item).strip()
+            vtk_paths = list(state.get("vtk_paths", []))
+            vtk_path = result.get("vtk_path")
+            if isinstance(vtk_path, str) and vtk_path:
+                vtk_paths.append(vtk_path)
             update = {
                 "compile_status": status.model_dump(),
                 "fea_results": {
@@ -492,6 +497,7 @@ def make_solve_fea_node():
                     for key, value in result.items()
                     if key not in {"stdout", "stderr", "command"}
                 },
+                "vtk_paths": vtk_paths,
                 "tool_logs": _merge_logs(state, "solve_fea", log or "solve_fea completed."),
             }
         except Exception as exc:  # pragma: no cover - exercised via integration

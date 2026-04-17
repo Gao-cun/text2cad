@@ -1,0 +1,12 @@
+{
+  "pass": false,
+  "issues": [
+    "Remote visual QA failed via model=qwen3-vl-max: Connection error."
+  ],
+  "missing_requirements": [],
+  "recommended_edits": [
+    "修复远程 VLM 调用或输出解析问题后，再重新执行视觉审查。"
+  ],
+  "backend": "heuristic_fallback",
+  "fallback_reason": "Remote visual QA failed via model=qwen3-vl-max: Connection error."
+}

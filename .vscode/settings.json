@@ -1,4 +1,10 @@
 {
     "python-envs.defaultEnvManager": "ms-python.python:conda",
-    "python-envs.defaultPackageManager": "ms-python.python:conda"
+    "python-envs.defaultPackageManager": "ms-python.python:conda",
+    "chat.tools.terminal.autoApprove": {
+        "/^conda run -n textcad-mvp env PYTHONPATH=\\. pytest tests/test_tools\\.py tests/test_agent_integration\\.py -q$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
 }

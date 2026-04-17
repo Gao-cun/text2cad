@@ -1,0 +1,12 @@
+{
+  "pass": false,
+  "issues": [
+    "Remote visual QA failed via model=qwen-vl-max: Error code: 400 - {'error': {'message': '<400> InternalError.Algo.InvalidParameter: The thinking_budget parameter must be a positive integer and not greater than 0', 'type': 'invalid_request_error', 'param': None, 'code': 'invalid_parameter_error'}, 'id': 'chatcmpl-7e4a2481-8f65-9db0-9757-104ee6811c3d', 'request_id': '7e4a2481-8f65-9db0-9757-104ee6811c3d'}"
+  ],
+  "missing_requirements": [],
+  "recommended_edits": [
+    "修复远程 VLM 调用或输出解析问题后，再重新执行视觉审查。"
+  ],
+  "backend": "heuristic_fallback",
+  "fallback_reason": "Remote visual QA failed via model=qwen-vl-max: Error code: 400 - {'error': {'message': '<400> InternalError.Algo.InvalidParameter: The thinking_budget parameter must be a positive integer and not greater than 0', 'type': 'invalid_request_error', 'param': None, 'code': 'invalid_parameter_error'}, 'id': 'chatcmpl-7e4a2481-8f65-9db0-9757-104ee6811c3d', 'request_id': '7e4a2481-8f65-9db0-9757-104ee6811c3d'}"
+}

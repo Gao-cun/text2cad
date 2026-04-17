@@ -416,11 +416,40 @@ def _render_views(workspace_path: str, render_config: dict[str, Any]) -> dict[st
 
     pv.OFF_SCREEN = True
     mesh = pv.read(stl_path)
+    bounds = mesh.bounds
+    dimensions_mm = {
+        "x": float(bounds[1] - bounds[0]),
+        "y": float(bounds[3] - bounds[2]),
+        "z": float(bounds[5] - bounds[4]),
+    }
+    dimension_text = (
+        "Scale(mm) "
+        f"X={dimensions_mm['x']:.1f} "
+        f"Y={dimensions_mm['y']:.1f} "
+        f"Z={dimensions_mm['z']:.1f}"
+    )
+
+    (render_dir / "render_scale.json").write_text(
+        json.dumps({"bounds": list(bounds), "dimensions_mm": dimensions_mm}, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
     image_paths: list[str] = []
     for view in render.views:
         plotter = pv.Plotter(off_screen=True, window_size=(render.image_width, render.image_height))
         plotter.set_background("white")
         plotter.add_mesh(mesh, color="lightgray", show_edges=True)
+        plotter.add_bounding_box(color="black", line_width=1)
+        plotter.show_bounds(
+            grid="back",
+            location="outer",
+            ticks="outside",
+            xtitle="X (mm)",
+            ytitle="Y (mm)",
+            ztitle="Z (mm)",
+            font_size=10,
+        )
+        plotter.add_text(dimension_text, position="upper_left", font_size=11, color="black")
         plotter.view_vector(_camera_vector(view))
         plotter.camera.zoom(1.15)
         image_path = render_dir / f"{view}.png"
@@ -428,7 +457,11 @@ def _render_views(workspace_path: str, render_config: dict[str, Any]) -> dict[st
         plotter.close()
         image_paths.append(str(image_path))
 
-    return {"image_paths": image_paths}
+    return {
+        "image_paths": image_paths,
+        "dimensions_mm": dimensions_mm,
+        "scale_metadata_path": str(render_dir / "render_scale.json"),
+    }
 
 
 materialize_workspace = tool(

@@ -56,6 +56,24 @@ def test_decide_next_routes_to_retry_or_end():
     assert success.update["final_status"] == "success"
 
 
+def test_decide_next_does_not_short_circuit_when_visual_presence_is_true_but_reviews_fail():
+    runtime = AgentRuntime(max_iterations=3)
+    node = make_decide_next_node(runtime)
+
+    decision = node(
+        {
+            "iteration": 2,
+            "compile_status": {"success": True},
+            "physics_review": {"pass": False},
+            "visual_review": {"pass": False, "is_present": True},
+        }
+    )
+
+    assert decision.goto == "design_generate"
+    assert decision.update["iteration"] == 3
+    assert decision.update["final_status"] == "running"
+
+
 def test_physics_qa_uses_displacement_threshold():
     runtime = AgentRuntime(displacement_limit_mm=5.0)
     node = make_physics_qa_node(runtime)

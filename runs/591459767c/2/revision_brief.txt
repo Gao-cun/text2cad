@@ -1,0 +1,1 @@
+视觉审查未通过：Remote visual QA failed via model=qwen3-vl-max: Connection error.；修复远程 VLM 调用或输出解析问题后，再重新执行视觉审查。

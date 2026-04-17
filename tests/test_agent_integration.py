@@ -143,11 +143,15 @@ def test_graph_persists_engineering_prompt_and_revision_artifacts(tmp_path):
     engineering_prompt = (workspace / "engineering_prompt.txt").read_text(encoding="utf-8")
     physics_report = (workspace / "physics_report.txt").read_text(encoding="utf-8")
     visual_review = json.loads((workspace / "visual_review.json").read_text(encoding="utf-8"))
+    vtk_paths = result.get("vtk_paths", [])
 
     assert "工程基线说明" in engineering_prompt
     assert "缺少前挡边" in design_request
     assert "力学分析报告" in physics_report
     assert visual_review["backend"] == "remote_model"
+    assert len(vtk_paths) == 2
+    assert all(Path(path).exists() for path in vtk_paths)
+    assert (workspace / "renders" / "render_scale.json").exists()
 
 
 def test_graph_fails_when_second_round_code_is_unchanged():

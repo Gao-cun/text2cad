@@ -79,6 +79,13 @@ def _to_int(value: str | None) -> int | None:
         return None
 
 
+def _to_positive_int_env(value: str | None) -> int | None:
+    parsed = _to_int(value)
+    if parsed is None or parsed <= 0:
+        return None
+    return parsed
+
+
 def _to_float_env(value: str | None) -> float | None:
     if value in (None, ""):
         return None
@@ -257,6 +264,20 @@ def _to_float(value: Any) -> float | None:
     return None
 
 
+def _to_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+    return None
+
+
 def _to_string_list(value: Any) -> list[str]:
     if value is None:
         return []
@@ -270,6 +291,15 @@ def _to_string_list(value: Any) -> list[str]:
 def _is_qwen_mixed_thinking_model(model_name: str) -> bool:
     lowered = model_name.lower()
     return lowered.startswith("qwen3") or lowered.startswith("qwq")
+
+
+def _supports_enable_thinking_param(model_name: str) -> bool:
+    """Whether model is known to accept the OpenAI-compatible enable_thinking field."""
+    lowered = model_name.lower()
+    # Current DashScope behavior: qwen-vl-* rejects thinking-related params.
+    if "qwen-vl" in lowered or "vl-" in lowered:
+        return False
+    return _is_qwen_mixed_thinking_model(model_name)
 
 
 def _normalize_vector(value: Any) -> list[float] | None:
@@ -627,6 +657,17 @@ class AgentRuntime:
     physics_report_fn: Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], str] | None = None
     _model_cache: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        # Allow runtime loop limit to be overridden by environment variables.
+        self.max_iterations = self._max_iterations_from_env(default=self.max_iterations)
+
+    def _max_iterations_from_env(self, default: int) -> int:
+        for env_name in ("TEXTCAD_MAX_ITERATIONS", "TEXTCAD_DEFAULT_MAX_ITERATIONS"):
+            parsed = _to_positive_int_env(os.getenv(env_name))
+            if parsed is not None:
+                return parsed
+        return default
+
     def _has_role_specific_env_config(self, role: str) -> bool:
         prefix = f"TEXTCAD_{role.upper()}_"
         return any(
@@ -634,17 +675,33 @@ class AgentRuntime:
             for suffix in ("MODEL", "PROVIDER", "BASE_URL", "API_KEY", "TEMPERATURE")
         )
 
-    def _timeout_for_role(self, role: str) -> float:
+    def _timeout_for_role(self, role: str, endpoint: ModelEndpoint | None = None) -> float:
+        endpoint = endpoint or self._endpoint_for_role(role)
+
         role_timeout = _to_float_env(os.getenv(f"TEXTCAD_{role.upper()}_TIMEOUT_S"))
         if role_timeout is not None and role_timeout > 0:
-            return role_timeout
+            base_timeout = role_timeout
+        else:
+            default_timeout = _to_float_env(os.getenv("TEXTCAD_DEFAULT_TIMEOUT_S"))
+            if default_timeout is not None and default_timeout > 0:
+                base_timeout = default_timeout
+            else:
+                role_defaults = {"visual": 90.0, "design": 180.0, "clarify": 90.0}
+                base_timeout = role_defaults.get(role, 60.0)
 
-        default_timeout = _to_float_env(os.getenv("TEXTCAD_DEFAULT_TIMEOUT_S"))
-        if default_timeout is not None and default_timeout > 0:
-            return default_timeout
+        if self._enable_thinking_for_role(role, endpoint) is not True:
+            return base_timeout
 
-        role_defaults = {"visual": 90.0, "design": 180.0, "clarify": 90.0}
-        return role_defaults.get(role, 60.0)
+        role_thinking_timeout = _to_float_env(os.getenv(f"TEXTCAD_{role.upper()}_THINKING_TIMEOUT_S"))
+        if role_thinking_timeout is not None and role_thinking_timeout > 0:
+            return role_thinking_timeout
+
+        default_thinking_timeout = _to_float_env(os.getenv("TEXTCAD_DEFAULT_THINKING_TIMEOUT_S"))
+        if default_thinking_timeout is not None and default_thinking_timeout > 0:
+            return default_thinking_timeout
+
+        # Reasoning mode may take significantly longer than direct mode.
+        return max(base_timeout, 1200.0)
 
     def _enable_thinking_for_role(self, role: str, endpoint: ModelEndpoint) -> bool | None:
         role_setting = _to_bool_env(os.getenv(f"TEXTCAD_{role.upper()}_ENABLE_THINKING"))
@@ -661,6 +718,9 @@ class AgentRuntime:
         return None
 
     def _extra_body_for_role(self, role: str, endpoint: ModelEndpoint) -> dict[str, Any] | None:
+        if not _supports_enable_thinking_param(endpoint.model):
+            return None
+
         enable_thinking = self._enable_thinking_for_role(role, endpoint)
         if enable_thinking is None:
             return None
@@ -865,7 +925,8 @@ class AgentRuntime:
             ),
             "VisualReview": (
                 "只返回一个 json object。"
-                "顶层字段必须使用这些名字：pass, issues, missing_requirements, recommended_edits。"
+                "顶层字段必须使用这些名字："
+                "pass, is_present, issues, missing_requirements, recommended_edits。"
             ),
         }
         return hints[schema_name]
@@ -1079,9 +1140,106 @@ class AgentRuntime:
             return base
 
         result = dict(base)
-        for key in ("pass", "issues", "missing_requirements", "recommended_edits"):
-            if payload.get(key) is not None:
-                result[key] = payload[key]
+
+        pass_value = _to_bool(payload.get("pass"))
+        if pass_value is None:
+            pass_value = _to_bool(payload.get("is_passed"))
+        if pass_value is None:
+            pass_value = _to_bool(payload.get("passed"))
+        if pass_value is not None:
+            result["pass"] = pass_value
+
+        explicit_presence = _to_bool(payload.get("is_present"))
+        if explicit_presence is not None:
+            result["is_present"] = explicit_presence
+
+        checklist_presence: list[bool] = []
+        checklist_missing: list[str] = []
+        checklist_issues: list[str] = []
+        feature_checklist = payload.get("feature_checklist")
+        if isinstance(feature_checklist, list):
+            for item in feature_checklist:
+                if not isinstance(item, dict):
+                    continue
+                presence = _to_bool(item.get("is_present"))
+                if presence is None:
+                    continue
+                checklist_presence.append(presence)
+                if presence:
+                    continue
+                feature_name = str(item.get("feature_name") or item.get("feature") or "未命名特征").strip()
+                evidence = str(item.get("evidence") or "").strip()
+                checklist_missing.append(feature_name)
+                issue = f"缺失特征：{feature_name}"
+                if evidence:
+                    issue = f"{issue}（{evidence}）"
+                checklist_issues.append(issue)
+
+        if checklist_presence and explicit_presence is None:
+            result["is_present"] = all(checklist_presence)
+
+        issues = _to_string_list(payload.get("issues"))
+        if not issues:
+            issues = _to_string_list(result.get("issues"))
+        for issue in checklist_issues:
+            if issue not in issues:
+                issues.append(issue)
+
+        sanity_check = payload.get("sanity_check")
+        if sanity_check is not None:
+            sanity_text = str(sanity_check).strip()
+            lowered_sanity = sanity_text.lower()
+            if sanity_text and (
+                "不通过" in sanity_text
+                or "未通过" in sanity_text
+                or "失败" in sanity_text
+                or "fail" in lowered_sanity
+            ):
+                sanity_issue = f"Sanity check: {sanity_text}"
+                if sanity_issue not in issues:
+                    issues.append(sanity_issue)
+        if issues:
+            result["issues"] = issues
+
+        missing_requirements = _to_string_list(payload.get("missing_requirements"))
+        if not missing_requirements:
+            missing_requirements = _to_string_list(result.get("missing_requirements"))
+        for item in checklist_missing:
+            if item not in missing_requirements:
+                missing_requirements.append(item)
+        if missing_requirements:
+            result["missing_requirements"] = missing_requirements
+
+        recommended_edits = _to_string_list(payload.get("recommended_edits"))
+        if not recommended_edits:
+            recommended_edits = _to_string_list(result.get("recommended_edits"))
+
+        revision_feedbacks = payload.get("revision_feedbacks")
+        if isinstance(revision_feedbacks, list):
+            for item in revision_feedbacks:
+                if isinstance(item, dict):
+                    defect = str(item.get("defect") or "").strip()
+                    modification = str(item.get("geometric_modification") or item.get("suggestion") or "").strip()
+                    if defect and modification:
+                        rec = f"{defect}：{modification}"
+                    else:
+                        rec = defect or modification
+                else:
+                    rec = str(item).strip()
+                if rec and rec not in recommended_edits:
+                    recommended_edits.append(rec)
+        if recommended_edits:
+            result["recommended_edits"] = recommended_edits
+
+        if pass_value is None:
+            has_failure_signals = bool(result.get("issues")) or bool(result.get("missing_requirements")) or bool(
+                result.get("recommended_edits")
+            )
+            if has_failure_signals:
+                result["pass"] = False
+            elif result.get("is_present") is not None:
+                result["pass"] = bool(result["is_present"])
+
         return result
 
     def _endpoint_for_role(self, role: str) -> ModelEndpoint:
@@ -1105,8 +1263,8 @@ class AgentRuntime:
 
     def _get_chat_model(self, role: str):
         endpoint = self._endpoint_for_role(role)
-        timeout_s = self._timeout_for_role(role)
         extra_body = self._extra_body_for_role(role, endpoint)
+        timeout_s = self._timeout_for_role(role, endpoint=endpoint)
         cache_key = (
             f"{endpoint.cache_key()}|timeout={timeout_s:.1f}"
             f"|extra_body={json.dumps(extra_body, sort_keys=True, ensure_ascii=False) if extra_body else 'null'}"

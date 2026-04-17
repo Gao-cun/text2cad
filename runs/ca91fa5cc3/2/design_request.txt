@@ -1,0 +1,82 @@
+工程基线说明
+- 原始需求：我要一个桌面手机支架，适合竖放看视频，结构尽量简洁，方便 3D 打印。
+- 设计摘要：设计一款适用于主流智能手机的桌面支架，采用倾斜背板与底部防滑结构，确保竖屏观看时的稳定性与最佳视角。整体采用一体化几何造型，避免复杂悬垂与倒扣，以适配FDM 3D打印工艺，实现免支撑或极少支撑打印。
+- 对象类型：桌面手机支架
+- 目标尺寸（mm）：长 100.00，宽 80.00，高 110.00
+- 材料：PLA，杨氏模量 3000.00 MPa，泊松比 0.35
+- 固定边界盒：[0.0, -40.0, -55.0, 0.0, 40.0, 55.0]
+- 加载边界盒：[100.0, -40.0, -55.0, 100.0, 40.0, 55.0]
+- 试探载荷向量（N）：[0.0, -2.0, 0.0]
+- 设计目标：提供约60°-70°的竖屏观看倾角; 结构极简，减少或消除打印支撑需求; 底部具备防滑与抗倾覆稳定性; 兼容厚度8-12mm的智能手机; 优化打印时间与材料消耗
+- 风格关键词：极简主义, 几何切面, 无支撑优化, 桌面配件, 现代工业风
+- 视觉要求：表面平整光滑，边缘做0.5-1mm倒角处理以防割手；整体轮廓干净利落，无多余装饰性纹理；颜色建议为哑光纯色，突出几何结构感与3D打印层纹的弱化效果。
+- 默认假设：假设手机重量约200g（2N），重心位于支架斜面中上部; 默认打印方向为底面朝下，无需额外支撑结构; 手机厚度按10mm设计底部挡边与背部限位; 观看倾角设定为65°以符合人体工学; 材料默认使用标准PLA，杨氏模量3000MPa，泊松比0.35; 坐标系约定：Y轴为垂直方向，向下为负
+- 约束：必须生成可执行的 CadQuery 代码，几何应可网格化、可渲染、可进入后续力学和视觉审查。
+
+硬性修改约束
+- 必须输出可执行 CadQuery 代码，并保留 build_model()/build()/make_model() 或 MODEL/model 入口。
+- 不允许退化成无语义方块，除非用户需求本身就是简单实体。
+- 优先保留上一轮已经正确的结构，只修复当前明确指出的问题。
+
+上一轮代码
+```python
+import cadquery as cq
+
+def build_model():
+    # 轮廓点 (Y, Z)，Y为垂直方向，Z为深度方向
+    pts = [
+        (0, -35),   # 底座后缘底部
+        (0, 35),    # 底座前缘底部
+        (10, 35),   # 底座前缘顶部
+        (10, 25),   # 手机挡边内侧底部
+        (15, 25),   # 手机挡边顶部
+        (100, -15), # 背板顶部前缘
+        (100, -35), # 背板顶部后缘
+        (0, -35)    # 闭合
+    ]
+
+    # 在YZ平面绘制轮廓并沿X轴拉伸100mm
+    model = cq.Workplane("YZ").polyline(pts).close().extrude(100)
+
+    # 底部防滑凹槽 (在底座上表面切出)
+    groove = cq.Workplane("YZ").rect(80, 70).extrude(2).translate((0, 9, 0))
+    model = model.cut(groove)
+
+    # 边缘倒角处理 (0.5-1mm)
+    model = model.edges("|X").fillet(1.0)
+    model = model.edges(">X").fillet(0.5)
+    model = model.edges("<X").fillet(0.5)
+
+    return model
+
+MODEL = build_model()
+```
+
+本轮修复摘要
+视觉审查未通过：Remote visual QA failed via model=qwen3-vl-plus: 7 validation errors for VisualReview
+issues.0
+  Input should be a valid string [type=string_type, input_value={'severity': 'high', 'des...无垂直支撑面。'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.13/v/string_type
+issues.1
+  Input should be a valid string [type=string_type, input_value={'severity': 'medium', 'd...底座长度比例。'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.13/v/string_type
+issues.2
+  Input should be a valid string [type=string_type, input_value={'severity': 'medium', 'd...提升稳定力臂。'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.13/v/string_type
+recommended_edits.0
+  Input should be a valid string [type=string_type, input_value={'target_feature': '顶...能完整’原则。'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.13/v/string_type
+recommended_edits.1
+  Input should be a valid string [type=string_type, input_value={'target_feature': '背...致打印不稳定。'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.13/v/string_type
+recommended_edits.2
+  Input should be a valid string [type=string_type, input_value={'target_feature': '底...主底面共面）。'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.13/v/string_type
+recommended_edits.3
+  Input should be a valid string [type=string_type, input_value={'target_feature': '边...与打印成功率。'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.13/v/string_type；修复远程 VLM 调用或输出解析问题后，再重新执行视觉审查。
+
+输出要求
+只返回一个 json object。顶层字段必须使用这些名字：cadquery_code, analysis_config, render_config, self_check_notes。
+self_check_notes 中必须说明本轮修改点、仍未满足项和任何阻碍。
+原始需求参考：我要一个桌面手机支架，适合竖放看视频，结构尽量简洁，方便 3D 打印。

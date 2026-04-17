@@ -94,6 +94,7 @@ class VisualReview(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     passed: bool = Field(alias="pass")
+    is_present: bool | None = None
     issues: list[str] = Field(default_factory=list)
     missing_requirements: list[str] = Field(default_factory=list)
     recommended_edits: list[str] = Field(default_factory=list)
@@ -138,6 +139,7 @@ class AgentState(TypedDict, total=False):
     compile_status: dict[str, Any]
     tool_logs: dict[str, str]
     fea_results: dict[str, Any]
+    vtk_paths: list[str]
     image_paths: list[str]
     visual_review: dict[str, Any]
     physics_review: dict[str, Any]

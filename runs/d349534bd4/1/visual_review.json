@@ -1,0 +1,13 @@
+{
+  "pass": false,
+  "is_present": null,
+  "issues": [
+    "缺少前挡边"
+  ],
+  "missing_requirements": [],
+  "recommended_edits": [
+    "增加挡边"
+  ],
+  "backend": "remote_model",
+  "fallback_reason": null
+}

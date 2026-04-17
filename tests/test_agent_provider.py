@@ -58,6 +58,14 @@ def test_runtime_uses_role_specific_timeout_for_chat_model(monkeypatch):
 
     monkeypatch.setattr("textcad_agent.agent.init_chat_model", fake_init_chat_model)
     monkeypatch.setenv("TEXTCAD_VISUAL_TIMEOUT_S", "75")
+    monkeypatch.setenv("TEXTCAD_DEFAULT_ENABLE_THINKING", "false")
+    monkeypatch.delenv("TEXTCAD_DEFAULT_TIMEOUT_S", raising=False)
+    monkeypatch.delenv("TEXTCAD_DESIGN_TIMEOUT_S", raising=False)
+    monkeypatch.delenv("TEXTCAD_DESIGN_ENABLE_THINKING", raising=False)
+    monkeypatch.delenv("TEXTCAD_VISUAL_ENABLE_THINKING", raising=False)
+    monkeypatch.delenv("TEXTCAD_DEFAULT_THINKING_TIMEOUT_S", raising=False)
+    monkeypatch.delenv("TEXTCAD_DESIGN_THINKING_TIMEOUT_S", raising=False)
+    monkeypatch.delenv("TEXTCAD_VISUAL_THINKING_TIMEOUT_S", raising=False)
     runtime = AgentRuntime(
         role_model_configs={
             "design": ModelEndpoint(
@@ -85,6 +93,12 @@ def test_runtime_uses_role_specific_timeout_for_chat_model(monkeypatch):
     assert len(captured_calls) == 2
 
 
+def test_runtime_reads_max_iterations_from_env(monkeypatch):
+    monkeypatch.setenv("TEXTCAD_MAX_ITERATIONS", "6")
+    runtime = AgentRuntime()
+    assert runtime.max_iterations == 6
+
+
 def test_runtime_disables_qwen3_thinking_by_default(monkeypatch):
     captured: dict[str, object] = {}
 
@@ -92,6 +106,8 @@ def test_runtime_disables_qwen3_thinking_by_default(monkeypatch):
         captured.update(kwargs)
         return dict(kwargs)
 
+    monkeypatch.delenv("TEXTCAD_DEFAULT_ENABLE_THINKING", raising=False)
+    monkeypatch.delenv("TEXTCAD_DESIGN_ENABLE_THINKING", raising=False)
     monkeypatch.setattr("textcad_agent.agent.init_chat_model", fake_init_chat_model)
     runtime = AgentRuntime(
         role_model_configs={
@@ -138,6 +154,89 @@ def test_runtime_allows_env_override_for_qwen3_thinking(monkeypatch):
     assert captured["extra_body"] == {"enable_thinking": True}
 
 
+def test_runtime_raises_timeout_when_thinking_enabled(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_init_chat_model(**kwargs):
+        captured.update(kwargs)
+        return dict(kwargs)
+
+    monkeypatch.setenv("TEXTCAD_DESIGN_ENABLE_THINKING", "true")
+    monkeypatch.setattr("textcad_agent.agent.init_chat_model", fake_init_chat_model)
+    runtime = AgentRuntime(
+        role_model_configs={
+            "design": ModelEndpoint(
+                role="design",
+                model="qwen3.6-plus",
+                model_provider="openai",
+                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                api_key="dashscope-key",
+            )
+        }
+    )
+
+    model = runtime._get_chat_model("design")
+
+    assert model["timeout"] == 1200.0
+    assert captured["timeout"] == 1200.0
+
+
+def test_runtime_respects_thinking_timeout_override(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_init_chat_model(**kwargs):
+        captured.update(kwargs)
+        return dict(kwargs)
+
+    monkeypatch.setenv("TEXTCAD_DESIGN_ENABLE_THINKING", "true")
+    monkeypatch.setenv("TEXTCAD_DESIGN_THINKING_TIMEOUT_S", "1500")
+    monkeypatch.setattr("textcad_agent.agent.init_chat_model", fake_init_chat_model)
+    runtime = AgentRuntime(
+        role_model_configs={
+            "design": ModelEndpoint(
+                role="design",
+                model="qwen3.6-plus",
+                model_provider="openai",
+                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                api_key="dashscope-key",
+            )
+        }
+    )
+
+    model = runtime._get_chat_model("design")
+
+    assert model["timeout"] == 1500.0
+    assert captured["timeout"] == 1500.0
+
+
+def test_runtime_does_not_send_thinking_param_to_qwen_vl(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_init_chat_model(**kwargs):
+        captured.update(kwargs)
+        return dict(kwargs)
+
+    monkeypatch.setenv("TEXTCAD_DEFAULT_ENABLE_THINKING", "true")
+    monkeypatch.setenv("TEXTCAD_VISUAL_ENABLE_THINKING", "true")
+    monkeypatch.setattr("textcad_agent.agent.init_chat_model", fake_init_chat_model)
+    runtime = AgentRuntime(
+        role_model_configs={
+            "visual": ModelEndpoint(
+                role="visual",
+                model="qwen-vl-max",
+                model_provider="openai",
+                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                api_key="dashscope-key",
+            )
+        }
+    )
+
+    model = runtime._get_chat_model("visual")
+
+    assert "extra_body" not in model
+    assert "extra_body" not in captured
+
+
 def test_runtime_keeps_offline_fallback_without_credentials(monkeypatch):
     for name in (
         "OPENAI_API_KEY",
@@ -159,6 +258,10 @@ def test_runtime_keeps_offline_fallback_without_credentials(monkeypatch):
 def test_visual_runtime_uses_longer_timeout_and_trims_images(monkeypatch):
     monkeypatch.setenv("TEXTCAD_VISUAL_TIMEOUT_S", "75")
     monkeypatch.setenv("TEXTCAD_VISUAL_MAX_IMAGES", "2")
+    monkeypatch.delenv("TEXTCAD_DEFAULT_ENABLE_THINKING", raising=False)
+    monkeypatch.delenv("TEXTCAD_VISUAL_ENABLE_THINKING", raising=False)
+    monkeypatch.delenv("TEXTCAD_DEFAULT_THINKING_TIMEOUT_S", raising=False)
+    monkeypatch.delenv("TEXTCAD_VISUAL_THINKING_TIMEOUT_S", raising=False)
     runtime = AgentRuntime()
 
     assert runtime._timeout_for_role("visual") == 75.0
@@ -248,3 +351,68 @@ def test_normalize_design_payload_accepts_nested_qwen_style_config():
     assert normalized["analysis_config"]["load_x"] == 95.0
     assert normalized["analysis_config"]["load_vector_n"] == [0.0, -2.0, 0.0]
     assert normalized["render_config"]["views"] == ["iso_front", "side"]
+
+
+def test_normalize_visual_review_payload_supports_feature_checklist_format():
+    runtime = AgentRuntime()
+    payload = {
+        "feature_checklist": [
+            {"feature_name": "后倾支撑面", "is_present": True, "evidence": "侧视图可见"},
+            {"feature_name": "前挡边", "is_present": False, "evidence": "顶视图不可见"},
+        ],
+        "sanity_check": "不通过。语义不完整。",
+        "is_passed": False,
+        "revision_feedbacks": [
+            {
+                "defect": "缺少前挡边",
+                "geometric_modification": "在承托前缘增加 5mm 高挡边",
+            }
+        ],
+    }
+
+    normalized = runtime._normalize_visual_review_payload(payload, ["/tmp/iso_front.png"])
+
+    assert normalized["is_present"] is False
+    assert normalized["pass"] is False
+    assert "前挡边" in normalized["missing_requirements"]
+    assert any("缺少前挡边" in item for item in normalized["recommended_edits"])
+
+
+def test_normalize_visual_review_payload_uses_is_present_when_pass_missing():
+    runtime = AgentRuntime()
+    payload = {
+        "is_present": True,
+        "feature_checklist": [
+            {"feature_name": "后倾支撑面", "is_present": True, "evidence": "可见"},
+            {"feature_name": "前挡边", "is_present": True, "evidence": "可见"},
+        ],
+    }
+
+    normalized = runtime._normalize_visual_review_payload(payload, ["/tmp/iso_front.png"])
+
+    assert normalized["is_present"] is True
+    assert normalized["pass"] is True
+
+
+def test_normalize_visual_review_payload_does_not_infer_pass_when_failure_signals_exist():
+    runtime = AgentRuntime()
+    payload = {
+        "is_present": True,
+        "feature_checklist": [
+            {"feature_name": "后倾支撑面", "is_present": True, "evidence": "可见"},
+            {"feature_name": "前挡边", "is_present": False, "evidence": "不可见"},
+        ],
+        "sanity_check": "不通过。前挡边缺失。",
+        "revision_feedbacks": [
+            {
+                "defect": "缺少前挡边",
+                "geometric_modification": "在承托前缘增加 5mm 高挡边",
+            }
+        ],
+    }
+
+    normalized = runtime._normalize_visual_review_payload(payload, ["/tmp/iso_front.png"])
+
+    assert normalized["is_present"] is True
+    assert normalized["pass"] is False
+    assert "前挡边" in normalized["missing_requirements"]

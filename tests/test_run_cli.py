@@ -64,3 +64,50 @@ def test_cli_respects_explicit_thread_id(monkeypatch, capsys):
 
     assert exit_code == 0
     assert fake_app.calls[0][1]["configurable"]["thread_id"] == "custom-thread"
+
+
+def test_cli_runs_tasks_file_and_prints_json(monkeypatch, capsys, tmp_path):
+    class _BatchFakeApp:
+        def invoke(self, payload, config=None):
+            prompt = payload["user_prompt"]
+            return {
+                "final_status": "success",
+                "iteration": 1,
+                "workspace_path": f"/tmp/{abs(hash(prompt))}",
+                "feedback_history": [],
+            }
+
+    monkeypatch.setattr("textcad_agent.run.create_agent", lambda: _BatchFakeApp())
+    tasks_file = tmp_path / "tasks.txt"
+    tasks_file.write_text("任务一\n\n# 忽略注释\n任务二\n", encoding="utf-8")
+
+    exit_code = main(["--tasks-file", str(tasks_file), "--parallel-workers", "2", "--json", "--no-progress"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert len(payload) == 2
+    assert payload[0]["prompt"] == "任务一"
+    assert payload[1]["prompt"] == "任务二"
+    assert payload[0]["result"]["final_status"] == "success"
+    assert payload[1]["result"]["final_status"] == "success"
+
+
+def test_cli_batch_mode_prints_progress_bar(monkeypatch, capsys, tmp_path):
+    class _BatchFakeApp:
+        def invoke(self, payload, config=None):
+            return {
+                "final_status": "success",
+                "iteration": 1,
+                "feedback_history": [],
+            }
+
+    monkeypatch.setattr("textcad_agent.run.create_agent", lambda: _BatchFakeApp())
+    tasks_file = tmp_path / "tasks.txt"
+    tasks_file.write_text("任务A\n任务B\n", encoding="utf-8")
+
+    exit_code = main(["--tasks-file", str(tasks_file), "--parallel-workers", "2"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "batch progress" in captured.err
+    assert "100.0%" in captured.err
