@@ -1,0 +1,16 @@
+from pathlib import Path
+
+length_mm = 90.0
+width_mm = 80.0
+height_mm = 85.0
+fixed_x = 45.0
+load_x = 25.0
+bbox_tol = 0.2
+load_vector_n = (0.0, 0.0, -1.0)
+young_modulus_mpa = 3500.0
+poisson_ratio = 0.36
+
+REPO_ROOT = Path(__file__).resolve().parent
+STEP_PATH = REPO_ROOT / "model.step"
+STL_PATH = REPO_ROOT / "model.stl"
+MSH_PATH = REPO_ROOT / "model.msh"

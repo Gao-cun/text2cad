@@ -1,0 +1,115 @@
+工程基线说明
+- 原始需求：我要一个桌面手机支架，适合竖放看视频，结构尽 量简洁，方便 3D 打印。
+- 设计摘要：单件式桌面支撑结构，提供稳定倾斜角度以适配竖屏手机，底部宽大防滑，背部设连续支撑面，整体无复杂装配，优化FDM打印路径。
+- 对象类型：手机支架
+- 目标尺寸（mm）：长 90.00，宽 80.00，高 110.00
+- 材料：PLA，杨氏模量 3500.00 MPa，泊松比 0.36
+- 固定边界盒：[-45.0, -40.0, 0.0, 45.0, 40.0, 5.0]
+- 加载边界盒：[-25.0, -38.0, 40.0, 25.0, -32.0, 90.0]
+- 试探载荷向量（N）：[0.0, 0.0, -1.0]
+- 设计目标：提供稳定竖屏支撑; 适配常见智能手机尺寸; 优化3D打印成型性（减少支撑/悬垂）; 结构轻量化且稳固
+- 风格关键词：极简, 几何, 实用主义, 一体化
+- 视觉要求：表面平整光滑; 边缘倒角处理; 无外露复杂接缝; 适合单色或双色打印
+- 默认假设：假设适配主流智能手机（宽度65-80mm，厚度8-10mm）; 假设采用单件FDM打印，无需额外支撑结构; 假设底部接触面完全固定于刚性桌面; 假设试探性载荷为手机重力（约2N）垂直作用于背部支撑面中心; 坐标系原点设于底座几何中心，Z轴垂直向上
+- 执行说明：以上边界盒、试探载荷和材料参数是当前求解后端的默认分析上下文，不是造型本身的唯一解；若你为了更符合真实物体语义而调整几何，请在 self_check_notes 中说明。
+- 约束：必须生成可执行的 CadQuery 代码，几何应可网格化、可渲染、可进入后续力学和视觉审查。
+
+实现边界与优先级
+- 必须输出可执行 CadQuery 代码，并保留 build_model()/build()/make_model() 或 MODEL/model 入口。
+- 不要退化成无语义方块，除非用户需求本身就是简单实体。
+- 优先保留上一轮已经正确的结构，只修复当前明确指出的问题。
+- analysis_config 主要服务当前后端执行；如果你认为几何语义需要微调其中的分析假设，可以调整，但必须在 self_check_notes 里说明原因。
+
+上一轮代码
+```python
+import cadquery as cq
+import math
+
+def build_model():
+    # 基础参数
+    base_w, base_d, base_h = 90.0, 80.0, 5.0
+    back_w, back_d, back_h = 70.0, 15.0, 75.0
+    tilt_angle = 20.0  # 后倾角（度）
+    lip_w, lip_d, lip_h = 60.0, 3.0, 5.0
+
+    # 1. 底座
+    base = cq.Workplane("XY").box(base_w, base_d, base_h)
+    # 底座后上边缘预倒角（与背板交汇处应力缓解，半径3.0mm）
+    base = base.edges(">Y and >Z").fillet(3.0)
+
+    # 2. 背部支撑板（倾斜）
+    backrest = cq.Workplane("XY").box(back_w, back_d, back_h)
+    # 定位：使底部前缘与底座后缘顶部对齐
+    backrest = backrest.translate((0, base_d/2 + back_d/2, base_h + back_h/2))
+    # 背板底部前边缘预倒角
+    backrest = backrest.edges("<Y and <Z").fillet(3.0)
+    # 绕底部前缘中心 (0, 40, 5) 旋转，实现后倾
+    backrest = backrest.rotate((0, base_d/2, base_h), (1, 0, 0), tilt_angle)
+
+    # 3. 合并底座与背板
+    model = base.union(backrest)
+
+    # 4. 前挡边（手机限位）
+    # 计算旋转后背板顶部前缘中心坐标
+    pivot_y, pivot_z = base_d/2, base_h
+    top_front_rel_y = back_d/2
+    top_front_rel_z = back_h/2
+    rad = math.radians(tilt_angle)
+    lip_y = pivot_y + top_front_rel_y * math.cos(rad) - top_front_rel_z * math.sin(rad)
+    lip_z = pivot_z + top_front_rel_y * math.sin(rad) + top_front_rel_z * math.cos(rad)
+    # 挡边放置在顶部前缘，向前（-Y方向）突出
+    lip = cq.Workplane("XY").box(lip_w, lip_d, lip_h)
+    lip = lip.translate((0, lip_y - lip_d/2, lip_z + lip_h/2))
+    model = model.union(lip)
+
+    # 5. 全局倒角与圆角处理（打印优化 & 视觉要求）
+    # 底部边缘保持平整以确保求解器识别固定面，仅做极小倒角防割手
+    model = model.edges("<Z").fillet(1.0)
+    # 顶部及外露边缘
+    model = model.edges(">Z").fillet(2.0)
+    # 侧边及背板过渡边
+    model = model.edges("|Z").fillet(2.5)
+    # 手机接触面（挡边顶部前沿）倒角防刮
+    model = model.faces(">Z").edges("<Y").chamfer(1.0)
+
+    return model
+```
+
+本轮修复摘要
+工具执行失败（build_mesh）：Command failed with exit code 1: /opt/anaconda3/envs/textcad-mvp/bin/python -c 
+import sys
+from pathlib import Path
+
+repo_root = Path('/Users/zhaowenhao/code/textcad')
+workspace = Path('/Users/zhaowenhao/code/textcad/runs/676a9cc70e/2')
+sys.path.insert(0, str(repo_root))
+
+from mvp.backend import build_mesh_artifacts
+
+result = build_mesh_artifacts(workspace)
+print(f"Exported mesh: {result['msh_path']}")
+
+Info    :  - Label 'Shapes/Open CASCADE STEP translator 7.8 1' (2D)
+
+Traceback (most recent call last):
+  File "<string>", line 11, in <module>
+  File "/Users/zhaowenhao/code/textcad/mvp/backend.py", line 154, in build_mesh_artifacts
+    raise RuntimeError(f"Expected exactly one solid volume, found {len(volumes)}: {volumes}")
+RuntimeError: Expected exactly one solid volume, found 0: []
+力学分析报告：【关键数值】
+最大位移：求解失败 (None)
+最大冯·米塞斯应力：求解失败 (None)
+测试载荷/边界条件：1N 垂直向下载荷作用于背部支撑面 (Y:-38~-32, Z:40~90)，底座区域 (Z:0~5) 设为全固支。材料为 PLA (弹性模量 3500 MPa)。
+
+【风险判断】
+危险/阻断。有限元求解未返回有效数据，无法判定是否超出 PLA 常规安全阈值 (30~50 MPa)；当前模型存在几何拓扑或网格划分缺陷，最易发生应力奇异与结构失效的位置为底座与背部支撑面的直角连接处。
+
+【代码级修改建议】
+1. 审查 CadQuery 建模逻辑，确保底座与背板为单一连续流形实体，并在两者相交的根部强制添加 `.fillet(2.0)`，以消除网格奇异点、改善 FDM 打印层间结合力并分散潜在应力。
+2. 校验 `fixed_boundary` 与 `load_boundary` 的坐标范围是否精确贴合实体表面，修复几何连续性后重新提交网格划分与求解，待获取有效位移/应力数据后再进行刚度迭代。
+视觉审查未通过：缺失特征：背部连续支撑面（用于承托手机背部）（三视图显示模型为单一曲面壳体结构，无独立背部支撑面；整体呈弧形薄壳，从底座前缘平滑过渡至后缘顶部，但该曲面在Y方向宽度随Z升高急剧收窄（顶面Y宽<10mm），且无垂直/倾斜平面区域可定义为‘支撑面’；更关键的是，该结构为单片连续壳，未形成与手机背部贴合所需的刚性接触面——实际是柔性曲面，无法提供稳定支撑。）；缺失特征：适配竖屏手机的稳定倾斜角度（模型整体为水平放置的长条弧壳，最大倾角出现在后端上翘处（Z≈85mm, Y≈53.5mm），但该区域仅为边缘微翘，主体支撑区（Z=20~60mm）近乎水平（坡度<5°），无法实现竖屏观看所需的70°±10°典型倾角；且无明确的手机放置平台或倾角基准面。）；缺失特征：前挡边或手机限位结构（所有视图中，模型正面（Y负向）完全开放，无任何凸起、挡边或凹槽；手机放置时仅靠底部摩擦力，极易因轻微震动前倾滑落，严重违背‘稳定竖屏支撑’设计目标。）；缺失特征：一体化单件结构（无装配、无悬垂过长）（模型虽为单件，但存在严重悬垂：后端顶部（Z>80mm）在X方向超出下方实体达15–20mm（见第一张图右端），且该悬垂部分为薄壳（厚度≈1.6mm），远低于FDM推荐最小悬垂长度（通常≤2mm无支撑）；违反‘优化3D打印成型性’要求。）；缺失特征：边缘倒角处理（表面平整光滑、无锐边）（线框图清晰显示所有外轮廓边缘均为尖锐直角（如底座四角、前后缘交界处），无任何fillet或chamfer特征；不符合‘边缘倒角’与‘表面平整光滑’的视觉要求，易刮伤手机屏幕。）；缺失特征：适配主流智能手机尺寸（宽65–80mm，厚8–10mm）（模型顶部有效支撑宽度（Y方向）在Z=80mm处仅约8–10mm（见第三张图X-Z剖面），远小于手机最小宽度65mm；无法容纳任何主流手机，功能失效。）；Sanity check: 不通过。模型退化为一个无功能语义的弧形薄壳（类似小舟或导流罩），缺乏手机支架的核心要素：无支撑面、无限位、无倾角、不可放置手机；结构存在超长悬垂与零强度边缘，完全违背‘简洁、稳固、适合3D打印’的设计原则。；背部连续支撑面（用于承托手机背部）；适配竖屏手机的稳定倾斜角度；前挡边或手机限位结构；一体化单件结构（无装配、无悬垂过长）；边缘倒角处理（表面平整光滑、无锐边）；适配主流智能手机尺寸（宽65–80mm，厚8–10mm）；模型为单一弧形薄壳, 无明确手机放置平台与支撑面，无法承托竖屏手机。：重构为梯形截面支撑结构：底座90×80mm矩形；从底座后缘（Y=+40mm, Z=0）向上延伸一倾斜平板（倾角70°），高度80mm，Y方向宽度保持≥65mm；该平板前端（Y方向）保留10mm深度作为手机背部接触区，确保刚性贴合。；缺少前挡边，手机易前滑脱落。：在倾斜支撑面顶端前沿（Z=80mm, Y≈+10mm），沿X方向extrude一个5mm高、3mm厚的矮挡边，X范围覆盖[-35, +35]mm，形成L形限位结构。；后端存在超长悬垂（>15mm）且壁厚过薄（≈1.6mm），违反FDM工艺约束。：删除当前悬空弧顶；将倾斜支撑面后缘直接连接至底座后缘，取消任何Z>75mm的无支撑悬伸；若需抬高，采用加厚梯形过渡（最小壁厚≥3mm）。；所有边缘为锐角，不符合表面处理与安全要求。：对所有外露边缘执行fillet：底座四角R=2.0mm；支撑面与底座交界处R=1.5mm；手机接触面边缘使用chamfer(1×1mm)以保护屏幕。
+
+输出要求
+只返回一个 json object。顶层字段必须使用这些名字：cadquery_code, analysis_config, render_config, self_check_notes。
+self_check_notes 中必须说明本轮修改点、仍未满足项和任何阻碍。
+原始需求参考：我要一个桌面手机支架，适合竖放看视频，结构尽 量简洁，方便 3D 打印。

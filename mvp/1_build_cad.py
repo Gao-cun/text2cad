@@ -1,23 +1,17 @@
 from __future__ import annotations
 
-import cadquery as cq
+import sys
+from pathlib import Path
 
-import config
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-
-def build_beam() -> cq.Workplane:
-    # Translate the box so the cantilever spans x in [0, length_mm].
-    return (
-        cq.Workplane("XY")
-        .box(config.length_mm, config.width_mm, config.height_mm)
-        .translate((config.length_mm / 2.0, 0.0, 0.0))
-    )
-
+from mvp.backend import export_cad_artifacts, resolve_workspace
 
 def main() -> None:
-    beam = build_beam()
-    cq.exporters.export(beam, str(config.STEP_PATH))
-    print(f"Exported STEP: {config.STEP_PATH}")
+    result = export_cad_artifacts(resolve_workspace())
+    print(f"Exported STEP: {result['step_path']}")
+    print(f"Exported STL: {result['stl_path']}")
 
 
 if __name__ == "__main__":

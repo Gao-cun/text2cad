@@ -17,6 +17,9 @@ def test_prompt_templates_load_from_resources():
     assert "json" in CLARIFY_SYSTEM_PROMPT.lower()
     assert "json" in DESIGN_SYSTEM_PROMPT.lower()
     assert "json" in VISUAL_SYSTEM_PROMPT.lower()
+    assert "request_summary" in CLARIFY_SYSTEM_PROMPT
+    assert "analysis_config" in DESIGN_SYSTEM_PROMPT
+    assert "render_config" in DESIGN_SYSTEM_PROMPT
 
 
 def test_load_prompt_returns_named_template():

@@ -36,6 +36,24 @@ def test_design_payload_rejects_invalid_vector_shape():
         )
 
 
+def test_analysis_config_can_be_derived_from_clarified_spec():
+    spec = ClarifiedSpec(
+        request_summary="phone stand",
+        length_mm=90.0,
+        width_mm=70.0,
+        height_mm=100.0,
+        fixed_boundary=[0.0, -35.0, -50.0, 0.0, 35.0, 50.0],
+        load_boundary=[90.0, -35.0, -50.0, 90.0, 35.0, 50.0],
+        load_vector_n=[0.0, -5.0, 0.0],
+    )
+
+    backend = AnalysisConfig.from_clarified_spec(spec)
+
+    assert backend.fixed_x == 0.0
+    assert backend.load_x == 90.0
+    assert backend.load_vector_n == [0.0, -5.0, 0.0]
+
+
 def test_review_models_accept_pass_alias():
     visual = VisualReview(**{"pass": True, "issues": [], "missing_requirements": [], "recommended_edits": []})
     physics = PhysicsReview(

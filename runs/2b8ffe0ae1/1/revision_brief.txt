@@ -1,0 +1,34 @@
+工具执行失败（build_mesh）：Command failed with exit code 1: /opt/anaconda3/envs/textcad-mvp/bin/python -c 
+import sys
+from pathlib import Path
+
+repo_root = Path('/Users/zhaowenhao/code/textcad')
+workspace = Path('/Users/zhaowenhao/code/textcad/runs/2b8ffe0ae1/1')
+sys.path.insert(0, str(repo_root))
+
+from mvp.backend import build_mesh_artifacts
+
+result = build_mesh_artifacts(workspace)
+print(f"Exported mesh: {result['msh_path']}")
+
+Info    :  - Label 'Shapes/Open CASCADE STEP translator 7.8 1/1/Open CASCADE STEP translator 7.8 1.1' (3D)
+Info    :  - Label 'Shapes/Open CASCADE STEP translator 7.8 1/2/Open CASCADE STEP translator 7.8 1.2' (3D)
+Info    :  - Label 'Shapes/Open CASCADE STEP translator 7.8 1/3/Open CASCADE STEP translator 7.8 1.3' (3D)
+
+Traceback (most recent call last):
+  File "<string>", line 11, in <module>
+  File "/Users/zhaowenhao/code/textcad/mvp/backend.py", line 154, in build_mesh_artifacts
+    raise RuntimeError(f"Expected exactly one solid volume, found {len(volumes)}: {volumes}")
+RuntimeError: Expected exactly one solid volume, found 3: [(3, 1), (3, 2), (3, 3)]
+力学分析报告：【关键数值】
+最大位移：数据缺失 (None)
+最大冯·米塞斯应力：数据缺失 (None)
+测试载荷/边界条件：底部 Z=0~10mm 区域全固支，背部支撑面 (Z=60~105mm) 施加 -2.0N 垂直向下载荷。
+
+【风险判断】
+无效/阻断。有限元求解未返回有效数值，表明当前 CAD 几何存在拓扑缺陷、网格划分失败或边界条件映射异常，无法评估 PLA 材料在 2N 载荷下的结构安全性。
+
+【代码级修改建议】
+1. 检查 CadQuery 实体生成逻辑，确保无开放边或自相交面。在底座与背板相交的直角根部显式添加 `.fillet(3.0)`，消除可能导致网格畸变的尖锐特征，提升后续求解收敛率。
+2. 核对边界条件选择器（如 `.faces(">Z")` 或 `.faces("<Z")`）是否精准匹配目标几何面，确保载荷面与固支面无重叠或遗漏，修复后重新触发网格划分与求解流程。
+视觉审查未通过：缺失特征：一体化L型或斜面支撑结构（模型由两个明显分离的部件组成：一个高大的倾斜背板（深灰）与一个低矮底座（浅灰），二者在Y方向存在明显间隙（约5–10mm），未形成物理连接；从侧视图（图3、4）可见两者之间无过渡曲面或连接筋，属于分体结构，违反'一体化'核心要求。）；缺失特征：手机放置区域（适配65–80mm宽手机）（底座前端未设任何限位结构（如挡边、凹槽或凸起），手机仅靠重力接触倾斜背板，极易滑落；且底座上表面为纯平面，无防滑纹理或定位特征；从图3剖面看，手机放置区宽度仅约30mm（Y方向从0到30），远小于最小适配宽度65mm，无法容纳主流手机。）；缺失特征：边缘适度倒角（防割手）（所有可见边缘（尤其是背板顶部、底座前缘）均为锐利直角，无任何圆角过渡；线框图中棱线清晰尖锐，不符合'边缘适度倒角'的视觉要求。）；缺失特征：无复杂悬垂结构（优化FDM打印）（背板与底座分离导致背板底部悬空（无支撑连接），其下部约20mm高度区域在Z<22.5mm范围内无任何支撑结构，属于>45°悬垂，FDM打印需大量支撑，违背'避免复杂悬垂'设计目标。）；缺失特征：底部防滑防倾倒设计（底座底面为光滑平面，无防滑纹路、橡胶垫槽或加宽脚垫；且因背板重心偏高且无横向约束，整体抗倾覆能力弱，易被轻微触碰推倒。）；Sanity check: 不通过。模型退化为两个未连接的几何块（底座+背板），缺乏手机定位与防滑功能，语义上不能称为'手机支架'；存在严重悬空与结构断裂，不符合一体化、易打印的核心要求。；一体化L型或斜面支撑结构；手机放置区域（适配65–80mm宽手机）；边缘适度倒角（防割手）；无复杂悬垂结构（优化FDM打印）；底部防滑防倾倒设计；背板与底座分离，未实现一体化结构，导致悬空与不稳定。：将背板底部延伸出一个厚度≥3mm的连接筋，沿Y方向贯穿底座宽度（80mm），并与底座上表面完全融合；连接筋高度从Z=0延伸至Z=22.5mm，确保无悬垂。；缺少手机限位结构，无法稳定放置65–80mm宽手机。：在底座上表面前端（Y=0处）添加一对对称挡边：沿X方向长度90mm，高度5mm，厚度2mm，内侧间距设为70mm（可调）；挡边顶部做R1mm倒角。；所有边缘为锐角，存在割手风险。：对所有外露边缘（包括底座四边、挡边顶边、背板上下边缘）执行fillet操作，半径R1.0mm；特别注意背板与底座交界处需连续倒角。；底座无防滑设计，易滑动倾倒。：在底座底面（Z=0平面）蚀刻网格状防滑纹：深度0.3mm，线宽0.8mm，间距3mm；或在四角添加4个直径6mm、高1.5mm的圆柱形脚垫凸台。

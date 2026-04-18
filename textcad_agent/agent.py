@@ -12,6 +12,8 @@ from typing import Any, Callable
 
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.prompts import ChatPromptTemplate
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import RetryPolicy
@@ -104,6 +106,67 @@ def _to_bool_env(value: str | None) -> bool | None:
     if lowered in {"0", "false", "no", "off"}:
         return False
     return None
+
+
+def _coerce_non_negative_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed < 0:
+        return None
+    return parsed
+
+
+def _normalize_token_usage_payload(payload: Any) -> dict[str, int] | None:
+    if not isinstance(payload, dict):
+        return None
+
+    prompt_tokens = None
+    for key in ("prompt_tokens", "input_tokens", "prompt_token_count", "input_token_count"):
+        prompt_tokens = _coerce_non_negative_int(payload.get(key))
+        if prompt_tokens is not None:
+            break
+
+    completion_tokens = None
+    for key in ("completion_tokens", "output_tokens", "completion_token_count", "output_token_count"):
+        completion_tokens = _coerce_non_negative_int(payload.get(key))
+        if completion_tokens is not None:
+            break
+
+    total_tokens = _coerce_non_negative_int(payload.get("total_tokens"))
+    if total_tokens is None and (prompt_tokens is not None or completion_tokens is not None):
+        total_tokens = (prompt_tokens or 0) + (completion_tokens or 0)
+
+    if prompt_tokens is None and completion_tokens is None and total_tokens is None:
+        return None
+
+    return {
+        "prompt_tokens": prompt_tokens or 0,
+        "completion_tokens": completion_tokens or 0,
+        "total_tokens": total_tokens or 0,
+    }
+
+
+def _extract_response_token_usage(response: Any) -> dict[str, int]:
+    candidates: list[Any] = [getattr(response, "usage_metadata", None)]
+    response_metadata = getattr(response, "response_metadata", None)
+    if isinstance(response_metadata, dict):
+        candidates.extend(
+            [
+                response_metadata.get("token_usage"),
+                response_metadata.get("usage"),
+                response_metadata,
+            ]
+        )
+
+    for candidate in candidates:
+        normalized = _normalize_token_usage_payload(candidate)
+        if normalized is not None:
+            return normalized
+    return {}
 
 
 def _parse_dimensions(prompt: str) -> tuple[float | None, float | None, float | None]:
@@ -647,6 +710,7 @@ class AgentRuntime:
     displacement_limit_mm: float = 5.0
     stress_limit_mpa: float = 30.0
     max_iterations: int = 3
+    max_compile_retries_per_iteration: int = 3
     clarify_model_name: str = "gpt-4.1-mini"
     design_model_name: str = "gpt-4.1"
     visual_model_name: str = "gpt-4.1-mini"
@@ -656,10 +720,17 @@ class AgentRuntime:
     visual_review_fn: Callable[[str, dict[str, Any], list[str], list[str]], VisualReview] | None = None
     physics_report_fn: Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], str] | None = None
     _model_cache: dict[str, Any] = field(default_factory=dict)
+    _token_usage_totals: dict[str, int] = field(
+        default_factory=lambda: {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    )
+    _token_usage_by_role: dict[str, dict[str, int]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         # Allow runtime loop limit to be overridden by environment variables.
         self.max_iterations = self._max_iterations_from_env(default=self.max_iterations)
+        self.max_compile_retries_per_iteration = self._max_compile_retries_from_env(
+            default=self.max_compile_retries_per_iteration
+        )
 
     def _max_iterations_from_env(self, default: int) -> int:
         for env_name in ("TEXTCAD_MAX_ITERATIONS", "TEXTCAD_DEFAULT_MAX_ITERATIONS"):
@@ -667,6 +738,39 @@ class AgentRuntime:
             if parsed is not None:
                 return parsed
         return default
+
+    def _max_compile_retries_from_env(self, default: int) -> int:
+        for env_name in ("TEXTCAD_MAX_COMPILE_RETRIES", "TEXTCAD_DEFAULT_MAX_COMPILE_RETRIES"):
+            parsed = _to_positive_int_env(os.getenv(env_name))
+            if parsed is not None:
+                return parsed
+        return default
+
+    def _record_token_usage(self, role: str | None, response: Any) -> None:
+        usage = _extract_response_token_usage(response)
+        if not usage:
+            return
+
+        for key, value in usage.items():
+            self._token_usage_totals[key] = self._token_usage_totals.get(key, 0) + int(value)
+
+        if role is None:
+            return
+
+        role_totals = self._token_usage_by_role.setdefault(
+            role,
+            {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        )
+        for key, value in usage.items():
+            role_totals[key] = role_totals.get(key, 0) + int(value)
+
+    def token_usage_snapshot(self) -> dict[str, Any]:
+        if not any(self._token_usage_totals.values()) and not self._token_usage_by_role:
+            return {}
+        return {
+            **self._token_usage_totals,
+            "by_role": {role: dict(usage) for role, usage in self._token_usage_by_role.items()},
+        }
 
     def _has_role_specific_env_config(self, role: str) -> bool:
         prefix = f"TEXTCAD_{role.upper()}_"
@@ -732,17 +836,17 @@ class AgentRuntime:
         ).lower()
         return _is_qwen_mixed_thinking_model(endpoint.model) or "dashscope" in provider_text
 
-    def _text_messages(self, role: str, system_prompt: str, user_text: str) -> list[Any]:
-        from langchain_core.messages import HumanMessage, SystemMessage
-
+    def _text_messages(self, role: str, system_prompt: str, user_text: str) -> list[BaseMessage]:
         endpoint = self._endpoint_for_role(role)
         if self._prefer_user_only_messages(endpoint):
-            combined = f"请遵守以下系统指令：\n{system_prompt.strip()}\n\n{user_text.strip()}"
-            return [HumanMessage(content=combined)]
-        return [SystemMessage(content=system_prompt), HumanMessage(content=user_text)]
+            prompt = ChatPromptTemplate.from_messages(
+                [("human", "请遵守以下系统指令：\n{system_prompt}\n\n{user_text}")]
+            )
+            return prompt.format_messages(system_prompt=system_prompt.strip(), user_text=user_text.strip())
+        prompt = ChatPromptTemplate.from_messages([("system", "{system_prompt}"), ("human", "{user_text}")])
+        return prompt.format_messages(system_prompt=system_prompt, user_text=user_text)
 
-    def _multimodal_messages(self, role: str, system_prompt: str, content: list[dict[str, Any]]) -> list[Any]:
-        from langchain_core.messages import HumanMessage, SystemMessage
+    def _multimodal_messages(self, role: str, system_prompt: str, content: list[dict[str, Any]]) -> list[BaseMessage]:
 
         endpoint = self._endpoint_for_role(role)
         if self._prefer_user_only_messages(endpoint):
@@ -759,6 +863,41 @@ class AgentRuntime:
                 merged_content.insert(0, {"type": "text", "text": f"请遵守以下系统指令：\n{system_prompt.strip()}"})
             return [HumanMessage(content=merged_content)]
         return [SystemMessage(content=system_prompt), HumanMessage(content=content)]
+
+    def build_clarify_request(self, prompt: str, feedback_history: list[str]) -> str:
+        return (
+            f"原始需求：{prompt}\n"
+            f"历史反馈：{feedback_history}\n"
+            f"{self._schema_hint('ClarifiedSpec')}\n"
+            "请先理解自由文本需求，再补全设计意图、尺寸、视觉要求、边界盒、载荷向量和必要假设。"
+        )
+
+    def build_physics_report_request(
+        self,
+        clarified_spec: dict[str, Any],
+        fea_results: dict[str, Any],
+        physics_review: dict[str, Any],
+    ) -> str:
+        return (
+            f"澄清规格：{clarified_spec}\n"
+            f"有限元摘要：{fea_results}\n"
+            f"物理审查结果：{physics_review}\n"
+            "请输出一段简洁工程报告，用于指导下一轮几何修复。"
+        )
+
+    def build_visual_review_request(
+        self,
+        prompt: str,
+        clarified_spec: dict[str, Any],
+        feedback_history: list[str],
+    ) -> str:
+        return (
+            f"{self._schema_hint('VisualReview')}\n"
+            "结合原始需求、澄清规格和渲染图，判断几何语义是否满足要求。"
+            f"\n原始需求：{prompt}"
+            f"\n澄清规格：{clarified_spec}"
+            f"\n历史反馈：{feedback_history}"
+        )
 
     def _visual_max_images(self) -> int:
         value = _to_int(os.getenv("TEXTCAD_VISUAL_MAX_IMAGES"))
@@ -826,6 +965,7 @@ class AgentRuntime:
             f"- 风格关键词：{', '.join(styles) if styles else 'printable, clean'}\n"
             f"- 视觉要求：{'; '.join(visual_requirements) if visual_requirements else prompt}\n"
             f"- 默认假设：{'; '.join(assumptions) if assumptions else '无'}\n"
+            "- 执行说明：以上边界盒、试探载荷和材料参数是当前求解后端的默认分析上下文，不是造型本身的唯一解；若你为了更符合真实物体语义而调整几何，请在 self_check_notes 中说明。\n"
             "- 约束：必须生成可执行的 CadQuery 代码，几何应可网格化、可渲染、可进入后续力学和视觉审查。\n"
         )
 
@@ -839,10 +979,11 @@ class AgentRuntime:
     ) -> str:
         sections = [
             engineering_prompt.strip(),
-            "硬性修改约束\n"
+            "实现边界与优先级\n"
             "- 必须输出可执行 CadQuery 代码，并保留 build_model()/build()/make_model() 或 MODEL/model 入口。\n"
-            "- 不允许退化成无语义方块，除非用户需求本身就是简单实体。\n"
-            "- 优先保留上一轮已经正确的结构，只修复当前明确指出的问题。\n",
+            "- 不要退化成无语义方块，除非用户需求本身就是简单实体。\n"
+            "- 优先保留上一轮已经正确的结构，只修复当前明确指出的问题。\n"
+            "- analysis_config 主要服务当前后端执行；如果你认为几何语义需要微调其中的分析假设，可以调整，但必须在 self_check_notes 里说明原因。\n",
         ]
         if previous_code:
             sections.append(f"上一轮代码\n```python\n{previous_code}\n```")
@@ -891,16 +1032,14 @@ class AgentRuntime:
         messages = self._text_messages(
             "clarify",
             PHYSICS_REPORT_SYSTEM_PROMPT,
-            (
-                f"澄清规格：{clarified_spec}\n"
-                f"有限元摘要：{fea_results}\n"
-                f"物理审查结果：{physics_review}\n"
-                "请输出一段简洁工程报告，用于指导下一轮几何修复。"
-            ),
+            self.build_physics_report_request(clarified_spec, fea_results, physics_review),
         )
         try:
             response = self._invoke_model_with_timeout(
-                model, messages, timeout_s=self._timeout_for_role("clarify")
+                model,
+                messages,
+                timeout_s=self._timeout_for_role("clarify"),
+                role="physics_report",
             )
             text = _strip_thinking_blocks(_extract_text_content(response.content)).strip()
             if not text:
@@ -931,13 +1070,22 @@ class AgentRuntime:
         }
         return hints[schema_name]
 
-    def _invoke_model_with_timeout(self, model: Any, messages: list[Any], timeout_s: float = 20.0) -> Any:
+    def _invoke_model_with_timeout(
+        self,
+        model: Any,
+        messages: list[Any],
+        timeout_s: float = 20.0,
+        *,
+        role: str | None = None,
+    ) -> Any:
         result: dict[str, Any] = {}
         error: dict[str, BaseException] = {}
 
         def worker() -> None:
             try:
-                result["response"] = model.invoke(messages)
+                response = model.invoke(messages)
+                self._record_token_usage(role, response)
+                result["response"] = response
             except BaseException as exc:  # pragma: no cover - depends on provider runtime
                 error["exception"] = exc
 
@@ -950,8 +1098,15 @@ class AgentRuntime:
             raise error["exception"]
         return result["response"]
 
-    def _invoke_raw_json(self, model: Any, messages: list[Any], timeout_s: float = 20.0) -> Any:
-        response = self._invoke_model_with_timeout(model, messages, timeout_s=timeout_s)
+    def _invoke_raw_json(
+        self,
+        model: Any,
+        messages: list[Any],
+        timeout_s: float = 20.0,
+        *,
+        role: str | None = None,
+    ) -> Any:
+        response = self._invoke_model_with_timeout(model, messages, timeout_s=timeout_s, role=role)
         text = _strip_thinking_blocks(_extract_text_content(response.content))
         return _load_json_payload(text)
 
@@ -1352,15 +1507,15 @@ class AgentRuntime:
         messages = self._text_messages(
             "clarify",
             CLARIFY_SYSTEM_PROMPT,
-            (
-                f"原始需求：{prompt}\n"
-                f"历史反馈：{feedback_history}\n"
-                f"{self._schema_hint('ClarifiedSpec')}\n"
-                "请先理解自由文本需求，再产出设计意图、默认尺寸、视觉要求、边界盒、载荷向量和假设。"
-            ),
+            self.build_clarify_request(prompt, feedback_history),
         )
         try:
-            payload = self._invoke_raw_json(model, messages, timeout_s=self._timeout_for_role("clarify"))
+            payload = self._invoke_raw_json(
+                model,
+                messages,
+                timeout_s=self._timeout_for_role("clarify"),
+                role="clarify",
+            )
             normalized = self._normalize_clarified_spec_payload(payload, prompt)
             return ClarifiedSpec.model_validate(normalized)
         except Exception:
@@ -1431,7 +1586,10 @@ class AgentRuntime:
         messages = self._text_messages("design", DESIGN_SYSTEM_PROMPT, prompt_text)
         try:
             response = self._invoke_model_with_timeout(
-                model, messages, timeout_s=self._timeout_for_role("design")
+                model,
+                messages,
+                timeout_s=self._timeout_for_role("design"),
+                role="design",
             )
             raw_text = _strip_thinking_blocks(_extract_text_content(response.content))
             payload = _load_design_json(raw_text)
@@ -1512,13 +1670,7 @@ class AgentRuntime:
         content: list[dict[str, Any]] = [
             {
                 "type": "text",
-                "text": (
-                    f"{self._schema_hint('VisualReview')}\n"
-                    "结合原始需求、澄清规格和渲染图，判断几何语义是否满足要求。"
-                    f"\n原始需求：{prompt}"
-                    f"\n澄清规格：{clarified_spec}"
-                    f"\n历史反馈：{feedback_history}"
-                ),
+                "text": self.build_visual_review_request(prompt, clarified_spec, feedback_history),
             }
         ]
         for image_path in selected_image_paths:
@@ -1534,7 +1686,12 @@ class AgentRuntime:
 
         messages = self._multimodal_messages("visual", VISUAL_SYSTEM_PROMPT, content)
         try:
-            payload = self._invoke_raw_json(model, messages, timeout_s=self._timeout_for_role("visual"))
+            payload = self._invoke_raw_json(
+                model,
+                messages,
+                timeout_s=self._timeout_for_role("visual"),
+                role="visual",
+            )
             normalized = self._normalize_visual_review_payload(payload, selected_image_paths)
             review = VisualReview.model_validate(
                 {

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import ast
-import os
 import uuid
 from typing import Any, Literal
 
@@ -18,12 +16,7 @@ from .state import (
     VisualReview,
 )
 from .tools import build_cad, build_mesh, materialize_workspace, persist_iteration_artifacts, render_views, solve_fea
-
-ALLOWED_IMPORT_ROOTS = {"__future__", "cadquery", "math", "typing"}
-DISALLOWED_CALLS = {"open", "exec", "eval", "compile", "input", "__import__"}
-DISALLOWED_ATTR_ROOTS = {"os", "sys", "subprocess", "shutil", "socket", "requests", "httpx", "pathlib"}
-BUILD_ENTRYPOINTS = {"build_model", "build", "make_model"}
-MODEL_VARIABLES = {"MODEL", "model"}
+from .validation import collect_static_validation_result
 
 
 def _merge_logs(state: AgentState, stage: str, content: str) -> dict[str, str]:
@@ -92,41 +85,7 @@ def _plane_x_from_bbox(bbox: list[float]) -> float:
 
 
 def _collect_static_validation_errors(code: str) -> list[str]:
-    errors: list[str] = []
-    try:
-        tree = ast.parse(code)
-    except SyntaxError as exc:
-        return [f"CAD 代码语法错误: {exc.msg} (line {exc.lineno})"]
-
-    has_entrypoint = False
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                root = alias.name.split(".")[0]
-                if root not in ALLOWED_IMPORT_ROOTS:
-                    errors.append(f"不允许导入模块: {alias.name}")
-        elif isinstance(node, ast.ImportFrom):
-            module = node.module or ""
-            root = module.split(".")[0]
-            if root not in ALLOWED_IMPORT_ROOTS:
-                errors.append(f"不允许 from-import 模块: {module}")
-        elif isinstance(node, ast.FunctionDef) and node.name in BUILD_ENTRYPOINTS:
-            has_entrypoint = True
-        elif isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id in MODEL_VARIABLES:
-                    has_entrypoint = True
-        elif isinstance(node, ast.Call):
-            if isinstance(node.func, ast.Name) and node.func.id in DISALLOWED_CALLS:
-                errors.append(f"不允许调用危险函数: {node.func.id}")
-            elif isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
-                if node.func.value.id in DISALLOWED_ATTR_ROOTS:
-                    errors.append(f"不允许调用危险模块 API: {node.func.value.id}.{node.func.attr}")
-
-    if not has_entrypoint:
-        errors.append("CAD 代码必须定义 build_model()/build()/make_model() 或 MODEL/model。")
-
-    return errors
+    return collect_static_validation_result(code).errors
 
 
 def make_ingest_request_node():
@@ -134,6 +93,8 @@ def make_ingest_request_node():
         return {
             "run_id": uuid.uuid4().hex[:10],
             "iteration": 1,
+            "compile_retry_count": 0,
+            "token_usage": {},
             "feedback_history": [],
             "tool_logs": {},
             "vtk_paths": [],
@@ -159,6 +120,7 @@ def make_clarify_spec_node(runtime):
             "clarified_spec": spec_dict,
             "engineering_prompt": engineering_prompt,
             "assumptions": spec.assumptions,
+            "token_usage": runtime.token_usage_snapshot(),
             "clarification_request": {
                 "missing_fields": spec.missing_high_risk_fields,
                 "assumptions": spec.assumptions,
@@ -209,17 +171,7 @@ def make_await_user_clarification_node(runtime):
 def make_engineer_spec_node():
     def engineer_spec(state: AgentState) -> dict[str, Any]:
         spec = ClarifiedSpec.model_validate(state["clarified_spec"])
-        backend = AnalysisConfig(
-            length_mm=spec.length_mm,
-            width_mm=spec.width_mm,
-            height_mm=spec.height_mm,
-            fixed_x=_plane_x_from_bbox(spec.fixed_boundary),
-            load_x=_plane_x_from_bbox(spec.load_boundary),
-            bbox_tol=spec.bbox_tol,
-            load_vector_n=spec.load_vector_n,
-            young_modulus_mpa=spec.material_young_mpa,
-            poisson_ratio=spec.material_poisson,
-        )
+        backend = AnalysisConfig.from_clarified_spec(spec)
         spec_dict = spec.model_dump()
         spec_dict["backend_config"] = backend.model_dump()
         return {
@@ -277,6 +229,7 @@ def make_design_generate_node(runtime):
                 "design_request": design_request,
                 "design_status": status.model_dump(),
                 "compile_status": compile_status.model_dump(),
+                "token_usage": runtime.token_usage_snapshot(),
                 "tool_logs": logs,
             }
 
@@ -305,6 +258,7 @@ def make_design_generate_node(runtime):
                 "design_request": design_request,
                 "design_status": status.model_dump(),
                 "compile_status": compile_status.model_dump(),
+                "token_usage": runtime.token_usage_snapshot(),
                 "tool_logs": logs,
             }
 
@@ -324,6 +278,8 @@ def make_design_generate_node(runtime):
             "design_payload": payload_dict,
             "design_request": design_request,
             "design_status": status.model_dump(),
+            "compile_retry_count": state.get("compile_retry_count", 0),
+            "token_usage": runtime.token_usage_snapshot(),
             "compile_status": {},
             "workspace_path": "",
             "fea_results": {},
@@ -376,14 +332,14 @@ def make_static_validate_node():
             )
 
         payload = DesignPayload.model_validate(state["design_payload"])
-        errors = _collect_static_validation_errors(payload.cadquery_code)
-        if errors:
+        validation = collect_static_validation_result(payload.cadquery_code)
+        if validation.errors:
             status = CompileStatus(
                 stage="static_validate",
                 success=False,
-                syntax_ok=not any("语法错误" in item for item in errors),
-                security_ok=not any("不允许" in item for item in errors),
-                error_message="；".join(errors),
+                syntax_ok=validation.syntax_ok,
+                security_ok=validation.security_ok,
+                error_message="；".join(validation.errors),
             )
             return Command(
                 update={
@@ -587,6 +543,7 @@ def make_physics_report_node(runtime):
         )
         return {
             "physics_report": report,
+            "token_usage": runtime.token_usage_snapshot(),
             "tool_logs": _merge_logs(state, "physics_report", log),
             "review_artifacts": _merge_review_artifacts(
                 state,
@@ -609,6 +566,7 @@ def make_visual_qa_node(runtime):
         review_dict = review.model_dump(by_alias=True)
         return {
             "visual_review": review_dict,
+            "token_usage": runtime.token_usage_snapshot(),
             "tool_logs": _merge_logs(state, "visual_qa", log),
             "review_artifacts": _merge_review_artifacts(state, visual_review=review_dict),
         }
@@ -669,9 +627,11 @@ def make_feedback_merge_node():
 def make_decide_next_node(runtime):
     def decide_next(state: AgentState) -> Command[Literal["design_generate", "__end__"]]:
         design_state = state.get("design_status", {}).get("state", "pending")
-        compile_ok = state.get("compile_status", {}).get("success", False)
+        compile_status = state.get("compile_status", {})
+        compile_ok = compile_status.get("success", False)
         physics_ok = state.get("physics_review", {}).get("pass", False)
         visual_ok = state.get("visual_review", {}).get("pass", False)
+        review_cycle_completed = bool(state.get("physics_review")) or bool(state.get("visual_review"))
 
         if design_state in {"failed", "unchanged_after_failed_review"}:
             return Command(update={"final_status": "failed"}, goto="__end__")
@@ -679,12 +639,25 @@ def make_decide_next_node(runtime):
         if compile_ok and physics_ok and visual_ok:
             return Command(update={"final_status": "success"}, goto="__end__")
 
+        if not review_cycle_completed:
+            next_retry_count = state.get("compile_retry_count", 0) + 1
+            if next_retry_count > runtime.max_compile_retries_per_iteration:
+                return Command(update={"final_status": "failed"}, goto="__end__")
+            return Command(
+                update={
+                    "compile_retry_count": next_retry_count,
+                    "final_status": "running",
+                },
+                goto="design_generate",
+            )
+
         if state.get("iteration", 1) >= runtime.max_iterations:
             return Command(update={"final_status": "failed"}, goto="__end__")
 
         return Command(
             update={
                 "iteration": state.get("iteration", 1) + 1,
+                "compile_retry_count": 0,
                 "final_status": "running",
             },
             goto="design_generate",

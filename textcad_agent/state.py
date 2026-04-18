@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import textwrap
 from typing import Any, Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -62,6 +63,45 @@ class AnalysisConfig(BaseModel):
         if len(value) != 3:
             raise ValueError("Load vector must contain 3 floats.")
         return value
+
+    @classmethod
+    def from_clarified_spec(cls, spec: "ClarifiedSpec") -> "AnalysisConfig":
+        fixed_x = float((spec.fixed_boundary[0] + spec.fixed_boundary[3]) / 2.0)
+        load_x = float((spec.load_boundary[0] + spec.load_boundary[3]) / 2.0)
+        return cls(
+            length_mm=spec.length_mm,
+            width_mm=spec.width_mm,
+            height_mm=spec.height_mm,
+            fixed_x=fixed_x,
+            load_x=load_x,
+            bbox_tol=spec.bbox_tol,
+            load_vector_n=spec.load_vector_n,
+            young_modulus_mpa=spec.material_young_mpa,
+            poisson_ratio=spec.material_poisson,
+        )
+
+    def to_runtime_config_source(self) -> str:
+        analysis = self.model_dump()
+        return textwrap.dedent(
+            f"""
+            from pathlib import Path
+
+            length_mm = {analysis["length_mm"]}
+            width_mm = {analysis["width_mm"]}
+            height_mm = {analysis["height_mm"]}
+            fixed_x = {analysis["fixed_x"]}
+            load_x = {analysis["load_x"]}
+            bbox_tol = {analysis["bbox_tol"]}
+            load_vector_n = {tuple(analysis["load_vector_n"])}
+            young_modulus_mpa = {analysis["young_modulus_mpa"]}
+            poisson_ratio = {analysis["poisson_ratio"]}
+
+            REPO_ROOT = Path(__file__).resolve().parent
+            STEP_PATH = REPO_ROOT / "model.step"
+            STL_PATH = REPO_ROOT / "model.stl"
+            MSH_PATH = REPO_ROOT / "model.msh"
+            """
+        ).lstrip()
 
 
 class RenderConfig(BaseModel):
@@ -135,6 +175,8 @@ class AgentState(TypedDict, total=False):
     design_status: dict[str, Any]
     run_id: str
     iteration: int
+    compile_retry_count: int
+    token_usage: dict[str, Any]
     workspace_path: str
     compile_status: dict[str, Any]
     tool_logs: dict[str, str]

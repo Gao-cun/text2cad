@@ -17,6 +17,9 @@
 - **CQ 语法纠错**：
   - 读取 BoundingBox 时，必须使用 `.xmin`, `.xmax`, `.ymin`, `.ymax`, `.zmin`, `.zmax`。
   - **严禁**出现 `min.X`, `max.X`, `bbox.x0` 等非法写法。
+- **分析参数原则**：
+  - `analysis_config` 的作用是服务当前求解/渲染后端，而不是限制你的造型创造力。
+  - 如果更合理的几何语义需要你同步调整 `analysis_config`，允许调整；但必须在 `self_check_notes` 中解释改了什么、为什么改。
 - **可打印性常识**：
   - 零件壁厚建议 ≥ 2.0mm。
   - 涉及承重的直角根部应默认添加半径 ≥ 2.0mm 的倒角（Fillet）以缓解应力集中。
@@ -26,11 +29,27 @@
 你必须严格返回一个纯 JSON 对象，格式如下：
 {
   "cadquery_code": "完整的、可直接运行的 Python 代码字符串",
-  "self_check_notes": "详细的本轮改动点说明：\n1. 针对反馈 [A] 修改了 [B] 处的参数/拓扑；\n2. 仍有哪些微小偏差或物理风险；\n3. 无法修复时的具体阻塞点说明。",
-  "geometric_metadata": {
-    "bounding_box_approx": [xmin, ymin, zmin, xmax, ymax, zmax],
-    "estimated_material_usage_mm3": 估算的体积
-  }
+  "analysis_config": {
+    "length_mm": 0,
+    "width_mm": 0,
+    "height_mm": 0,
+    "fixed_x": 0,
+    "load_x": 0,
+    "bbox_tol": 0.2,
+    "load_vector_n": [0, 0, 0],
+    "young_modulus_mpa": 3500,
+    "poisson_ratio": 0.36
+  },
+  "render_config": {
+    "views": ["iso_front", "iso_back", "top", "side"],
+    "image_width": 1024,
+    "image_height": 768
+  },
+  "self_check_notes": [
+    "说明本轮具体改动点",
+    "说明仍未满足的项或剩余风险",
+    "如果调整了 analysis_config，也在这里说明原因"
+  ]
 }
 
 # Iteration Example (迭代修改示例)

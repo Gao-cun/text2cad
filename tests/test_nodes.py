@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from textcad_agent.agent import AgentRuntime, ModelEndpoint
 from textcad_agent.nodes import (
+    _collect_static_validation_errors,
     make_await_user_clarification_node,
     make_design_generate_node,
     make_decide_next_node,
@@ -36,17 +37,19 @@ def test_decide_next_routes_to_retry_or_end():
     retry = node(
         {
             "iteration": 1,
+            "compile_retry_count": 0,
             "compile_status": {"success": False},
-            "physics_review": {"pass": False},
-            "visual_review": {"pass": True},
+            "physics_review": {},
+            "visual_review": {},
         }
     )
     assert retry.goto == "design_generate"
-    assert retry.update["iteration"] == 2
+    assert retry.update["compile_retry_count"] == 1
 
     success = node(
         {
             "iteration": 1,
+            "compile_retry_count": 0,
             "compile_status": {"success": True},
             "physics_review": {"pass": True},
             "visual_review": {"pass": True},
@@ -63,6 +66,7 @@ def test_decide_next_does_not_short_circuit_when_visual_presence_is_true_but_rev
     decision = node(
         {
             "iteration": 2,
+            "compile_retry_count": 0,
             "compile_status": {"success": True},
             "physics_review": {"pass": False},
             "visual_review": {"pass": False, "is_present": True},
@@ -71,7 +75,46 @@ def test_decide_next_does_not_short_circuit_when_visual_presence_is_true_but_rev
 
     assert decision.goto == "design_generate"
     assert decision.update["iteration"] == 3
+    assert decision.update["compile_retry_count"] == 0
     assert decision.update["final_status"] == "running"
+
+
+def test_decide_next_keeps_same_iteration_for_build_cad_failure():
+    runtime = AgentRuntime(max_iterations=3, max_compile_retries_per_iteration=3)
+    node = make_decide_next_node(runtime)
+
+    decision = node(
+        {
+            "iteration": 2,
+            "compile_retry_count": 1,
+            "compile_status": {"success": False, "stage": "build_cad"},
+            "physics_review": {},
+            "visual_review": {},
+        }
+    )
+
+    assert decision.goto == "design_generate"
+    assert "iteration" not in decision.update
+    assert decision.update["compile_retry_count"] == 2
+    assert decision.update["final_status"] == "running"
+
+
+def test_decide_next_fails_after_compile_retry_limit():
+    runtime = AgentRuntime(max_iterations=3, max_compile_retries_per_iteration=2)
+    node = make_decide_next_node(runtime)
+
+    decision = node(
+        {
+            "iteration": 1,
+            "compile_retry_count": 2,
+            "compile_status": {"success": False, "stage": "build_cad"},
+            "physics_review": {},
+            "visual_review": {},
+        }
+    )
+
+    assert decision.goto == "__end__"
+    assert decision.update["final_status"] == "failed"
 
 
 def test_physics_qa_uses_displacement_threshold():
@@ -80,6 +123,40 @@ def test_physics_qa_uses_displacement_threshold():
     result = node({"fea_results": {"max_disp_mm": 12.0, "max_stress_mpa": None}})
     assert result["physics_review"]["pass"] is False
     assert "最大位移" in result["physics_review"]["violations"][0]
+
+
+def test_static_validate_rejects_bbox_min_max_style_access():
+    code = "\n".join(
+        [
+            "import cadquery as cq",
+            "",
+            "def build_model():",
+            "    body = cq.Workplane('XY').box(10, 10, 10)",
+            "    bb = body.val().BoundingBox()",
+            "    return body.translate((-bb.min.X, 0, 0))",
+        ]
+    )
+
+    errors = _collect_static_validation_errors(code)
+
+    assert any("BoundingBox.min.X/max.X" in item for item in errors)
+
+
+def test_static_validate_rejects_dangerous_alias_calls():
+    code = "\n".join(
+        [
+            "import cadquery as cq",
+            "import os as operating_system",
+            "",
+            "def build_model():",
+            "    operating_system.system('echo nope')",
+            "    return cq.Workplane('XY').box(10, 10, 10)",
+        ]
+    )
+
+    errors = _collect_static_validation_errors(code)
+
+    assert any("operating_system.system" in item for item in errors)
 
 
 def test_await_user_clarification_merges_interrupt_response(monkeypatch):

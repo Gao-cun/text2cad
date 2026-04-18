@@ -1,0 +1,34 @@
+工具执行失败（build_mesh）：Command failed with exit code 1: /opt/anaconda3/envs/textcad-mvp/bin/python -c 
+import sys
+from pathlib import Path
+
+repo_root = Path('/Users/zhaowenhao/code/textcad')
+workspace = Path('/Users/zhaowenhao/code/textcad/runs/10fc8af952/3')
+sys.path.insert(0, str(repo_root))
+
+from mvp.backend import build_mesh_artifacts
+
+result = build_mesh_artifacts(workspace)
+print(f"Exported mesh: {result['msh_path']}")
+
+Info    :  - Label 'Shapes/Open CASCADE STEP translator 7.8 1/1/Open CASCADE STEP translator 7.8 1.1' (3D)
+Info    :  - Label 'Shapes/Open CASCADE STEP translator 7.8 1/2/Open CASCADE STEP translator 7.8 1.2' (2D)
+Info    :  - Label 'Shapes/Open CASCADE STEP translator 7.8 1/3/Open CASCADE STEP translator 7.8 1.3' (3D)
+Info    :  - Label 'Shapes/Open CASCADE STEP translator 7.8 1/4/Open CASCADE STEP translator 7.8 1.4' (3D)
+Info    :  - Label 'Shapes/Open CASCADE STEP translator 7.8 1/5/Open CASCADE STEP translator 7.8 1.5' (3D)
+
+Traceback (most recent call last):
+  File "<string>", line 11, in <module>
+  File "/Users/zhaowenhao/code/textcad/mvp/backend.py", line 154, in build_mesh_artifacts
+    raise RuntimeError(f"Expected exactly one solid volume, found {len(volumes)}: {volumes}")
+RuntimeError: Expected exactly one solid volume, found 4: [(3, 1), (3, 2), (3, 3), (3, 4)]
+力学分析报告：【关键数值】
+测试载荷为垂直向下 4.9 N（约 0.5 kg 手机重力），底座底面全约束。当前最大位移与最大冯·米塞斯应力均为空值（None），有限元求解器因网格划分失败或几何拓扑异常未返回有效物理场数据。
+
+【风险判断】
+阻断/失败。仿真链路中断，无法验证 PLA 材料（屈服强度约 30~50 MPa）在当前工况下的结构安全性。首要风险为 CAD 模型存在非流形几何、零厚度特征或自相交面，导致网格生成器崩溃或求解器无法收敛。
+
+【代码级修改建议】
+1. 在 CadQuery 代码中排查布尔运算（如 `cut`/`union`）后的实体完整性，显式调用 `.clean()` 或 `.heal()` 修复潜在的非流形边与微小碎面，确保最终输出为单一、闭合的 Solid 对象。
+2. 在底座与背部支撑板的直角连接处强制添加 `fillet(radius=2.0)`。此举可消除网格划分时的几何奇异点，同时为后续 FEA 提供符合 PLA 打印特性的应力过渡区，几何修复后请重新触发网格划分与求解。
+视觉审查未通过：缺失特征：背部设有限位特征（用于卡住手机后缘）（所有视角中背板顶部为纯斜面锐边，无任何凸起挡边、台阶或凹槽；X-Z与Y-Z剖面均显示手机放置区为开放V型空间，无横向约束结构；顶视图可见背板上缘为连续斜面，未见任何Y向突起。）；缺失特征：背部设有防滑特征（纹理/凸点/预留嵌件区）（背板接触面光滑平整，网格线清晰显示无任何微结构（如交叉凹槽、圆锥阵列、橡胶嵌件凹槽等）；表面为单一连续曲面，违反‘防滑’核心设计目标。）；缺失特征：边缘适度倒角处理（提升手感与安全性）（模型所有外露棱线（背板顶部前后棱、底座四角、侧边交线）均为尖锐直角；多视角可见明显锐边高光与几何折痕，无fillet或chamfer过渡；尤其背板顶部锐边存在划伤风险。）；缺失特征：适配主流手机宽度（70–80mm）的支撑槽/侧向挡边（底座上表面为完整平面，前端无侧挡结构；X-Y剖面显示手机放置区无Y向限位；两内侧距离未定义，无法约束70–80mm宽手机；从Z=0平面看，底座前缘无立柱或凸台。）；缺失特征：避免复杂悬垂结构（优化FDM打印）（背板为长悬臂结构（跨度>100mm），根部连接处为尖锐直角，无加强筋、三角肋或厚度增强；历史力学报告已确认其刚度严重不足；渲染图中可见背板与底座间为薄壁直角连接，属高风险悬垂结构。）；Sanity check: 不通过。模型退化为一个‘带斜面的梯形块’：虽具支架外形轮廓，但缺失全部关键功能结构（限位、防滑、倒角、侧挡），无法实现‘稳固支撑竖屏手机’的核心语义；且存在悬空薄弱悬臂，力学失效风险极高；同时CAD生成失败（多次fillet报错、多实体输出），表明几何拓扑异常，属于功能性与结构性双重退化。；背部设有限位特征（用于卡住手机后缘）；背部设有防滑特征（纹理/凸点/预留嵌件区）；边缘适度倒角处理（提升手感与安全性）；适配主流手机宽度（70–80mm）的支撑槽/侧向挡边；避免复杂悬垂结构（优化FDM打印）；背部缺少手机后缘限位结构，导致手机易后滑倾倒。：在背板顶部内侧（朝向手机一侧），沿Y方向 extrude 一个高度 8mm、厚度 3mm 的薄片作为限位挡边；其Y向位置应距底座前缘约75mm（适配80mm宽手机），确保手机后壳可抵住该挡边。；底座前端无侧向约束，手机易左右晃动或前倾。：在底座上表面前端（X≈±37.5mm, Z=0~10mm），沿X方向对称添加两个高度 6mm、宽度 4mm 的短立柱作为侧挡边；两挡边内距设为75mm，留出2mm公差间隙以兼容70–80mm手机宽度。；所有外露棱边为锐角，存在划伤风险且手感差。：对以下边缘执行 fillet R=1.5mm：①背板顶部前后棱；②底座四个上角；③侧挡边与底座交界处；④背板根部与底座内角（注意：需先补强再倒角，避免fillet失败）。；背板表面光滑，无防滑措施。：在背板接触手机区域（Z=20~100mm，Y=-40~40mm），创建0.3mm深、间距2mm的交叉网格凹槽（cross-hatch texture），或替换为0.5mm高圆锥阵列凸点（直径1mm，间距3mm）。；背板为长悬臂，抗弯刚度不足，易大变形失效，且几何拓扑异常导致CAD构建失败。：在背板根部（Z=10mm 至 Z=60mm 区间）沿 X 轴方向添加一道厚度为 5mm 的直角三角形加强筋（Ribs），连接底座后缘与背板内侧，形成三角稳定结构；同时将背板主体厚度增至8mm；完成补强后，再对根部内角执行 fillet R=6mm；最后调用 .clean() 或 .heal() 确保输出为单一闭合Solid。

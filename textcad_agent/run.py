@@ -6,10 +6,70 @@ import json
 import os
 import sys
 import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from .agent import create_agent
+
+SINGLE_RUN_STAGE_ORDER = [
+    "ingest_request",
+    "clarify_spec",
+    "engineer_spec",
+    "design_generate",
+    "static_validate",
+    "materialize_workspace",
+    "build_cad",
+    "build_mesh",
+    "solve_fea",
+    "render_views",
+    "physics_qa",
+    "physics_report",
+    "visual_qa",
+    "revision_brief",
+    "feedback_merge",
+    "decide_next",
+]
+
+SINGLE_RUN_STAGE_LABELS = {
+    "ingest_request": "初始化请求",
+    "clarify_spec": "澄清需求",
+    "engineer_spec": "整理工程约束",
+    "design_generate": "生成/修复 CadQuery",
+    "static_validate": "静态校验",
+    "materialize_workspace": "写入工作区",
+    "build_cad": "编译 CAD",
+    "build_mesh": "生成网格",
+    "solve_fea": "求解力学",
+    "render_views": "渲染视图",
+    "physics_qa": "评估力学结果",
+    "physics_report": "生成力学报告",
+    "visual_qa": "视觉审查",
+    "revision_brief": "汇总修订摘要",
+    "feedback_merge": "合并反馈",
+    "decide_next": "决定下一步",
+}
+
+
+@dataclass
+class _SingleRunProgress:
+    current_stage: str = "ingest_request"
+    iteration: int = 1
+    compile_retry_count: int = 0
+    final_status: str = "running"
+    token_usage: dict[str, Any] = field(default_factory=dict)
+
+    def apply_update(self, stage_name: str, payload: dict[str, Any]) -> None:
+        self.current_stage = stage_name
+        if "iteration" in payload:
+            self.iteration = payload["iteration"]
+        if "compile_retry_count" in payload:
+            self.compile_retry_count = payload["compile_retry_count"]
+        if "final_status" in payload:
+            self.final_status = payload["final_status"]
+        token_usage = payload.get("token_usage")
+        if isinstance(token_usage, dict):
+            self.token_usage = token_usage
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -29,7 +89,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-progress",
         action="store_true",
-        help="Disable batch progress bar output.",
+        help="Disable progress bar output.",
     )
     parser.add_argument(
         "--thread-id",
@@ -74,6 +134,16 @@ def _result_summary(result: dict[str, Any]) -> str:
     visual_review = result.get("visual_review") or {}
     if visual_review.get("backend"):
         lines.append(f"visual_backend: {visual_review['backend']}")
+
+    token_usage = result.get("token_usage") or {}
+    total_tokens = token_usage.get("total_tokens")
+    if total_tokens:
+        lines.append(
+            "tokens: "
+            f"total={total_tokens} "
+            f"prompt={token_usage.get('prompt_tokens', 0)} "
+            f"completion={token_usage.get('completion_tokens', 0)}"
+        )
 
     feedback = result.get("feedback_history") or []
     if feedback:
@@ -132,10 +202,78 @@ def _print_batch_progress(done: int, total: int) -> None:
         print("", file=sys.stderr, flush=True)
 
 
-def _invoke_once(prompt: str, thread_id: str) -> dict[str, Any]:
+def _single_progress_bar(current: int, total: int, width: int = 24) -> str:
+    total = max(total, 1)
+    current = min(max(current, 1), total)
+    ratio = current / total
+    filled = int(width * ratio)
+    return "[" + "#" * filled + "-" * (width - filled) + "]"
+
+
+def _single_progress_line(progress: _SingleRunProgress) -> str:
+    stage_index = SINGLE_RUN_STAGE_ORDER.index(progress.current_stage) + 1
+    total_stages = len(SINGLE_RUN_STAGE_ORDER)
+    stage_label = SINGLE_RUN_STAGE_LABELS.get(progress.current_stage, progress.current_stage)
+    pieces = [
+        _single_progress_bar(stage_index, total_stages),
+        f"{stage_index:02d}/{total_stages}",
+        f"第{progress.iteration}轮",
+    ]
+    if progress.compile_retry_count > 0:
+        pieces.append(f"编译重试{progress.compile_retry_count}")
+    pieces.append(stage_label)
+    total_tokens = (progress.token_usage or {}).get("total_tokens")
+    if total_tokens:
+        pieces.append(f"tokens={total_tokens}")
+    if progress.final_status not in {"", "running"}:
+        pieces.append(f"status={progress.final_status}")
+    return " ".join(pieces)
+
+
+def _print_single_progress(progress: _SingleRunProgress, *, finished: bool = False) -> None:
+    print(f"\rprogress {_single_progress_line(progress)}", end="", file=sys.stderr, flush=True)
+    if finished:
+        print("", file=sys.stderr, flush=True)
+
+
+def _iter_stream_updates(event: Any) -> list[tuple[str, dict[str, Any]]]:
+    if isinstance(event, tuple) and len(event) == 2:
+        event = event[1]
+    if not isinstance(event, dict):
+        return []
+    updates: list[tuple[str, dict[str, Any]]] = []
+    for stage_name, payload in event.items():
+        if stage_name not in SINGLE_RUN_STAGE_LABELS:
+            continue
+        if isinstance(payload, dict):
+            updates.append((stage_name, payload))
+    return updates
+
+
+def _invoke_once(prompt: str, thread_id: str, *, show_progress: bool = False) -> dict[str, Any]:
     app = create_agent()
     config = {"configurable": {"thread_id": thread_id}}
-    return app.invoke({"user_prompt": prompt}, config=config)
+    payload = {"user_prompt": prompt}
+
+    if not show_progress or not hasattr(app, "stream") or not hasattr(app, "get_state"):
+        return app.invoke(payload, config=config)
+
+    progress = _SingleRunProgress()
+    _print_single_progress(progress)
+    for event in app.stream(payload, config=config, stream_mode="updates"):
+        for stage_name, update in _iter_stream_updates(event):
+            progress.apply_update(stage_name, update)
+            _print_single_progress(progress)
+
+    state_snapshot = app.get_state(config)
+    result = getattr(state_snapshot, "values", state_snapshot)
+    if isinstance(result, dict):
+        progress.final_status = str(result.get("final_status", progress.final_status))
+        token_usage = result.get("token_usage")
+        if isinstance(token_usage, dict):
+            progress.token_usage = token_usage
+    _print_single_progress(progress, finished=True)
+    return result
 
 
 def _run_batch_tasks(
@@ -160,7 +298,7 @@ def _run_batch_tasks(
         future_map: dict[concurrent.futures.Future[dict[str, Any]], tuple[int, str, str]] = {}
         for index, prompt in enumerate(tasks):
             thread_id = batch_thread_id(index)
-            future = executor.submit(_invoke_once, prompt, thread_id)
+            future = executor.submit(_invoke_once, prompt, thread_id, show_progress=False)
             future_map[future] = (index, prompt, thread_id)
 
         for future in concurrent.futures.as_completed(future_map):
@@ -241,7 +379,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if any(item.get("error") for item in batch_results) else 0
 
     thread_id = args.thread_id or f"textcad-cli-{uuid.uuid4().hex[:8]}"
-    result = _invoke_once(args.prompt, thread_id)
+    result = _invoke_once(args.prompt, thread_id, show_progress=not args.no_progress)
 
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))

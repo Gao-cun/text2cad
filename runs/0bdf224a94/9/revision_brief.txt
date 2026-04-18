@@ -1,0 +1,38 @@
+工具执行失败（build_mesh）：Command failed with exit code 1: /opt/anaconda3/envs/textcad-mvp/bin/python -c 
+import sys
+from pathlib import Path
+
+repo_root = Path('/Users/zhaowenhao/code/textcad')
+workspace = Path('/Users/zhaowenhao/code/textcad/runs/0bdf224a94/9')
+sys.path.insert(0, str(repo_root))
+
+from mvp.backend import build_mesh_artifacts
+
+result = build_mesh_artifacts(workspace)
+print(f"Exported mesh: {result['msh_path']}")
+
+Info    :  - Label 'Shapes/Open CASCADE STEP translator 7.8 1/1/Open CASCADE STEP translator 7.8 1.1' (3D)
+Info    :  - Label 'Shapes/Open CASCADE STEP translator 7.8 1/2/Open CASCADE STEP translator 7.8 1.2' (3D)
+Info    :  - Label 'Shapes/Open CASCADE STEP translator 7.8 1/3/Open CASCADE STEP translator 7.8 1.3' (3D)
+Info    :  - Label 'Shapes/Open CASCADE STEP translator 7.8 1/4/Open CASCADE STEP translator 7.8 1.4' (3D)
+Info    :  - Label 'Shapes/Open CASCADE STEP translator 7.8 1/5/Open CASCADE STEP translator 7.8 1.5' (3D)
+Info    :  - Label 'Shapes/Open CASCADE STEP translator 7.8 1/6/Open CASCADE STEP translator 7.8 1.6' (3D)
+Info    :  - Label 'Shapes/Open CASCADE STEP translator 7.8 1/7/Open CASCADE STEP translator 7.8 1.7' (3D)
+Info    :  - Label 'Shapes/Open CASCADE STEP translator 7.8 1/8/Open CASCADE STEP translator 7.8 1.8' (3D)
+Info    :  - Label 'Shapes/Open CASCADE STEP translator 7.8 1/9/Open CASCADE STEP translator 7.8 1.9' (3D)
+
+Traceback (most recent call last):
+  File "<string>", line 11, in <module>
+  File "/Users/zhaowenhao/code/textcad/mvp/backend.py", line 154, in build_mesh_artifacts
+    raise RuntimeError(f"Expected exactly one solid volume, found {len(volumes)}: {volumes}")
+RuntimeError: Expected exactly one solid volume, found 9: [(3, 1), (3, 2), (3, 3), (3, 4), (3, 5), (3, 6), (3, 7), (3, 8), (3, 9)]
+力学分析报告：【关键数值】
+测试载荷：垂直向下 4.9 N（模拟 0.5 kg 手机重力）；边界条件：底座底面全约束。当前最大位移与最大冯·米塞斯应力均为 None，有限元求解器因几何拓扑或网格划分异常未能输出有效数值。
+
+【风险判断】
+阻断/失败。仿真链路中断，无法验证 PLA 材料（屈服强度约 30~50 MPa）下的结构安全裕度。当前首要风险为 CAD 模型存在非流形边、零厚度特征或自相交面，导致网格生成失败或求解器发散。
+
+【代码级修改建议】
+1. 在 CadQuery 实体构建流程末端显式调用 `.clean()` 或 `.heal()` 方法，清理布尔运算残留的拓扑缺陷，确保输出单一、闭合的流形实体（Solid），以恢复网格划分器的正常运行。
+2. 在底座与背部支撑板的直角交汇处强制添加 `fillet(radius=2.0)`。该操作可消除网格划分时的几何奇异点，同时为后续 PLA 受力提供必要的应力过渡区，满足 3D 打印件的抗断裂要求。
+视觉审查未通过：缺失特征：背部限位特征（防止手机滑落）（所有四张视图中，斜面顶端（Z≈95–131mm区域）为光滑连续平面，无任何垂直挡边、台阶或凸起结构；图中顶部黑线仅为轮廓线或辅助线，非实体几何；手机放置后将因重力沿斜面下滑，无法实现限位功能。）；缺失特征：防滑特征（如凸点/纹理/橡胶垫槽）（斜面支撑区域（Y≈-27.4~0, Z≈21.8~95mm）表面完全光滑，无任何微结构；第四图右侧点阵为坐标网格渲染标记，非模型表面特征；与澄清规格‘背部设有限位与防滑特征’直接冲突。）；缺失特征：边缘适度倒角（提升手感与安全性）（所有外露棱线（底座前缘Y=0、斜面顶部边缘Z≈131mm、侧壁交线）均为锐利直角; 第三、四图Y-Z/X-Z剖面清晰显示尖锐棱角，无fillet或chamfer处理；违反‘边缘采用适度倒角’的视觉要求。）；缺失特征：一体化单件成型且无悬垂结构（≤45°倾角）（斜面下缘（Y≈-27.4~0, Z≈0~21.8mm区域）与底座未完全连接，形成明显悬空过渡区；第一、二图可见该区域倾角目测约60–70°，远大于45°；FDM打印需支撑，违反‘减少或消除打印支撑’设计目标。）；缺失特征：适配主流手机宽度（70–80mm）的支撑接触面（第三图Y-Z剖面显示，斜面有效支撑宽度仅约27.4mm（Y≈-27.4~0），远小于70–80mm需求；手机重心（约Y=-35mm）将落在支撑面外，导致侧翻或滑脱；无法稳定夹持主流智能手机。）；Sanity check: 不通过。模型虽具支架外形轮廓，但缺失全部功能性结构（限位、防滑、倒角），且存在悬垂风险与尺寸失配问题; CAD生成链路多次崩溃（build_mesh报100个独立体），证实几何存在非流形、零厚度或拓扑断裂，退化为一个无实用价值的几何斜坡块。；背部限位特征（防止手机滑落）；防滑特征（如凸点/纹理/橡胶垫槽）；边缘适度倒角（提升手感与安全性）；一体化单件成型且无悬垂结构（≤45°倾角）；适配主流手机宽度（70–80mm）的支撑接触面；背部无任何限位结构，手机将滑落。：在斜面顶端内侧（Z=125~131mm, Y≈-10mm），沿X方向添加一高度5mm、厚度3mm的垂直挡边（长度≈80mm）；使用 cq.Workplane('XY').rect(80,5).extrude(3) 并 union 至主结构。；表面无防滑特征，摩擦系数不足。：在斜面支撑区域（Y≈-70~0, Z≈30~120mm），以0.8mm间距阵列直径1.2mm、高0.3mm的半球凸点（dome pattern），共约12×15阵列；使用 cq.Sketch().circle(0.6).finalize() + extrude(0.3) 并通过 cq.Workplane('XY').pushPoints(...) 阵列实现。；所有外露棱角为锐角，不符合安全与手感要求。：对所有外露边缘（底座四角、斜面顶部前缘、侧壁交线）执行R=1.5mm fillet处理；优先处理Z=0与Z=131mm处的尖锐棱线；调用 model.edges('|Y or |X or <Z or >Z').fillet(1.5)，确保边存在后再执行。；斜面下缘悬空>45°，需打印支撑。：将斜面下部改为阶梯式过渡：从底座后缘（Y=0）起，先以10mm高垂直壁（Y=0~10），再接60°斜面；或在斜面中段（Y≈-35）下方添加三角加强筋（连接底座Y=0与斜面Y=-35），确保所有面倾角≤45°；使用 cq.Workplane('XZ').moveTo(0,0).lineTo(0,10).lineTo(-35,10).lineTo(-35,0).close().extrude(10) 作为加强筋并 union。；支撑面宽度仅约27.4mm，无法容纳70–80mm宽手机。：拓宽斜面在Y方向投影：将支撑接触区域从Y=0扩展至Y=-70mm，并同步加宽顶部挡边至80mm；调整斜面轮廓点序列，使Y_min = -70，Y_max = 0，确保手机重心（约Y=-35mm）完全落在支撑面上。；CAD模型存在非流形几何导致构建失败（build_mesh报100个体）。：在CadQuery中：1) 所有布尔操作（union/cut）后显式调用 .clean()；2) 避免使用 .heal()（该方法不存在），改用 OCP.BRepCheck_Analyzer(model.val()).IsValid() 验证；3) 检查 polyline 闭合性，确保无重复点或零长边；4) 最终输出前验证 model.val().isValid() 返回 True；5) 避免使用 union(*list) 超过5个参数，改用循环逐个 union。

@@ -62,26 +62,7 @@ class RenderViewsInput(BaseModel):
 
 
 def _analysis_config_content(design: DesignPayload) -> str:
-    analysis = design.analysis_config.model_dump()
-    lines = [
-        "from pathlib import Path",
-        "",
-        f"length_mm = {analysis['length_mm']}",
-        f"width_mm = {analysis['width_mm']}",
-        f"height_mm = {analysis['height_mm']}",
-        f"fixed_x = {analysis['fixed_x']}",
-        f"load_x = {analysis['load_x']}",
-        f"bbox_tol = {analysis['bbox_tol']}",
-        f"load_vector_n = {tuple(analysis['load_vector_n'])}",
-        f"young_modulus_mpa = {analysis['young_modulus_mpa']}",
-        f"poisson_ratio = {analysis['poisson_ratio']}",
-        "",
-        "REPO_ROOT = Path(__file__).resolve().parent",
-        'STEP_PATH = REPO_ROOT / "model.step"',
-        'STL_PATH = REPO_ROOT / "model.stl"',
-        'MSH_PATH = REPO_ROOT / "model.msh"',
-    ]
-    return "\n".join(lines) + "\n"
+    return design.analysis_config.to_runtime_config_source()
 
 
 def _write_iteration_artifacts(
@@ -255,80 +236,23 @@ def _persist_iteration_artifacts(
 def _build_cad(workspace_path: str) -> dict[str, Any]:
     workspace = Path(workspace_path)
     script = textwrap.dedent(
-        """
+        f"""
+        import sys
         from pathlib import Path
-        import importlib.util
-        from types import SimpleNamespace
-        import cadquery as cq
-        import config
 
-        try:
-            from cadquery.occ_impl.geom import BoundBox
-        except Exception:
-            BoundBox = None
+        repo_root = Path({str(REPO_ROOT)!r})
+        sys.path.insert(0, str(repo_root))
 
-        if BoundBox is not None and not hasattr(BoundBox, "min"):
-            BoundBox.min = property(lambda self: SimpleNamespace(X=self.xmin, Y=self.ymin, Z=self.zmin))
-        if BoundBox is not None and not hasattr(BoundBox, "max"):
-            BoundBox.max = property(lambda self: SimpleNamespace(X=self.xmax, Y=self.ymax, Z=self.zmax))
+        from mvp.backend import export_cad_artifacts
 
-        _original_fillet = cq.Workplane.fillet
-        def _safe_fillet(self, radius):
-            try:
-                return _original_fillet(self, radius)
-            except Exception as exc:
-                message = str(exc).lower()
-                if "edges be selected" in message or "command not done" in message:
-                    return self.parent if getattr(self, "parent", None) is not None else self
-                raise
-        cq.Workplane.fillet = _safe_fillet
-
-        _original_chamfer = cq.Workplane.chamfer
-        def _safe_chamfer(self, length, length2=None):
-            try:
-                if length2 is None:
-                    return _original_chamfer(self, length)
-                return _original_chamfer(self, length, length2)
-            except Exception as exc:
-                message = str(exc).lower()
-                if "edges be selected" in message or "command not done" in message:
-                    return self.parent if getattr(self, "parent", None) is not None else self
-                raise
-        cq.Workplane.chamfer = _safe_chamfer
-
-        module_path = Path("generated_model.py")
-        spec = importlib.util.spec_from_file_location("generated_model", module_path)
-        if spec is None or spec.loader is None:
-            raise RuntimeError("Failed to load generated_model.py")
-
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-
-        model = None
-        for candidate_name in ("build_model", "build", "make_model"):
-            candidate = getattr(module, candidate_name, None)
-            if callable(candidate):
-                model = candidate()
-                break
-
-        if model is None:
-            model = getattr(module, "MODEL", None) or getattr(module, "model", None)
-
-        if model is None:
-            raise RuntimeError(
-                "Generated CAD code must define build_model()/build()/make_model() or MODEL/model."
-            )
-
-        cq.exporters.export(model, str(config.STEP_PATH))
-        cq.exporters.export(model, str(config.STL_PATH))
-        print(f"Exported STEP: {config.STEP_PATH}")
-        print(f"Exported STL: {config.STL_PATH}")
+        result = export_cad_artifacts(Path.cwd())
+        print(f"Exported STEP: {{result['step_path']}}")
+        print(f"Exported STL: {{result['stl_path']}}")
         """
     )
     result = _run_command(
         [sys.executable, "-c", script],
         cwd=workspace,
-        extra_env={"PYTHONPATH": str(workspace)},
     )
     return {
         "step_path": str(workspace / "model.step"),
@@ -341,13 +265,17 @@ def _build_mesh(workspace_path: str) -> dict[str, Any]:
     workspace = Path(workspace_path)
     script = textwrap.dedent(
         f"""
-        import runpy
         import sys
         from pathlib import Path
 
+        repo_root = Path({str(REPO_ROOT)!r})
         workspace = Path({str(workspace)!r})
-        sys.path.insert(0, str(workspace))
-        runpy.run_path({str(MVP_DIR / "2_build_mesh.py")!r}, run_name="__main__")
+        sys.path.insert(0, str(repo_root))
+
+        from mvp.backend import build_mesh_artifacts
+
+        result = build_mesh_artifacts(workspace)
+        print(f"Exported mesh: {{result['msh_path']}}")
         """
     )
     result = _run_command(
@@ -375,17 +303,14 @@ def _solve_fea(workspace_path: str) -> dict[str, Any]:
         import sys
         from pathlib import Path
 
+        repo_root = Path({str(REPO_ROOT)!r})
         workspace = Path({str(workspace)!r})
-        sys.path.insert(0, str(workspace))
-        sys.argv = [
-            "sfepy-run",
-            {str(MVP_DIR / "3_solve_fea.py")!r},
-            "-o",
-            {str(output_base)!r},
-        ]
-        from sfepy.scripts.simple import main
+        sys.path.insert(0, str(repo_root))
 
-        raise SystemExit(main())
+        from mvp.backend import run_fea_artifacts
+
+        result = run_fea_artifacts(workspace, output_base={str(output_base)!r})
+        print(f"Exported FEA VTK: {{result['vtk_path']}}")
         """
     )
     result = _run_command(
