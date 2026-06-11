@@ -154,7 +154,7 @@ def test_graph_persists_engineering_prompt_and_revision_artifacts(tmp_path):
     assert (workspace / "renders" / "render_scale.json").exists()
 
 
-def test_graph_fails_when_second_round_code_is_unchanged():
+def test_graph_returns_best_when_repair_code_is_unchanged():
     runtime = AgentRuntime(
         displacement_limit_mm=500.0,
         clarify_fn=lambda prompt, feedback: _happy_spec(),
@@ -173,8 +173,11 @@ def test_graph_fails_when_second_round_code_is_unchanged():
     app = build_agent(runtime=runtime, with_memory=False)
     result = app.invoke({"user_prompt": "设计一个会卡住修复的测试梁"})
 
-    assert result["final_status"] == "failed"
-    assert result["design_status"]["state"] == "unchanged_after_failed_review"
+    assert result["final_status"] == "success"
+    assert result["design_status"]["state"] == "unchanged_after_feedback"
+    assert result["best_iteration"] == 1
+    assert result["returned_model_source"] == "best_so_far"
+    assert result["quality_history"]
 
 
 def test_graph_supports_freeform_phone_stand_prompt_end_to_end():

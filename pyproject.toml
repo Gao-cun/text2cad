@@ -28,12 +28,14 @@ dev = [
 
 [project.scripts]
 textcad-run = "textcad_agent.run:main"
+textcad-web = "textcad_agent.web:main"
 
 [tool.setuptools.packages.find]
 include = ["textcad_agent*"]
 
 [tool.setuptools.package-data]
 "textcad_agent.prompts" = ["*.txt"]
+"textcad_agent.webapp" = ["*.html", "*.js", "*.css", "vendor/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,2 +1,0 @@
-[console_scripts]
-textcad-run = textcad_agent.run:main
