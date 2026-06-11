@@ -127,6 +127,8 @@ class DesignStatus(BaseModel):
     state: str = "pending"
     error_message: str | None = None
     code_changed: bool | None = None
+    change_ratio: float | None = None
+    large_rewrite: bool = False
     used_model: bool = False
 
 
@@ -135,6 +137,15 @@ class VisualReview(BaseModel):
 
     passed: bool = Field(alias="pass")
     is_present: bool | None = None
+    object_present: bool | None = None
+    object_category_match: bool | None = None
+    semantic_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    geometry_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    printability_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    defects: list[dict[str, Any]] = Field(default_factory=list)
+    preserve_components: list[str] = Field(default_factory=list)
+    forbidden_repairs: list[str] = Field(default_factory=list)
+    acceptance_decision: Literal["accept", "repair", "reject"] = "repair"
     issues: list[str] = Field(default_factory=list)
     missing_requirements: list[str] = Field(default_factory=list)
     recommended_edits: list[str] = Field(default_factory=list)
@@ -170,6 +181,7 @@ class AgentState(TypedDict, total=False):
     design_payload: dict[str, Any]
     design_request: str
     latest_revision_brief: str
+    structured_revision: dict[str, Any]
     physics_report: str
     review_artifacts: dict[str, Any]
     design_status: dict[str, Any]
@@ -187,4 +199,26 @@ class AgentState(TypedDict, total=False):
     physics_review: dict[str, Any]
     feedback_history: list[str]
     clarification_request: dict[str, Any]
+    pipeline_phase: Literal["clarifying", "generating", "reviewing", "revising", "completed", "failed"]
+    best_iteration: int | None
+    best_score: float | None
+    best_code: str | None
+    best_run_dir: str | None
+    best_model_step: str | None
+    best_model_stl: str | None
+    best_visual_review: dict[str, Any] | None
+    best_physics_review: dict[str, Any] | None
+    best_compile_status: dict[str, Any] | None
+    best_quality_report: dict[str, Any] | None
+    no_improvement_count: int
+    max_no_improvement: int
+    min_improvement_delta: float
+    quality_history: list[dict[str, Any]]
+    repair_mode: bool
+    stop_reason: str
+    final_iteration: int | None
+    final_score: float | None
+    returned_model_source: str
+    latest_model_step: str
+    latest_model_stl: str
     final_status: Literal["running", "awaiting_user", "success", "failed"]

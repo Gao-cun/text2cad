@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TextCAD Console</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">TextCAD Console</p>
+          <h1>TextCAD 工作台</h1>
+          <p class="hero-copy" id="backend-health-summary">正在检查后端状态…</p>
+        </div>
+        <div class="hero-panel" id="active-task-banner">
+          <div class="empty-state compact">还没有进行中的任务</div>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="column left">
+          <div class="panel compose">
+            <div class="panel-head">
+              <h2>创建任务</h2>
+              <span class="hint">输入自然语言需求</span>
+            </div>
+            <form id="task-form" class="compose-form">
+              <textarea
+                id="prompt-input"
+                name="prompt"
+                placeholder="例如：我要一个桌面手机支架，适合竖放看视频，结构尽量简洁，方便 3D 打印。"
+                rows="7"
+              ></textarea>
+              <div class="compose-options">
+                <label class="field-control" for="max-iterations-input">
+                  <span>最大迭代</span>
+                  <input id="max-iterations-input" name="max_iterations" type="number" min="1" max="20" step="1" />
+                </label>
+                <label class="field-control" for="max-no-improvement-input">
+                  <span>早停轮数</span>
+                  <input id="max-no-improvement-input" name="max_no_improvement" type="number" min="0" max="20" step="1" />
+                </label>
+                <label class="field-control" for="min-improvement-delta-input">
+                  <span>提升阈值</span>
+                  <input id="min-improvement-delta-input" name="min_improvement_delta" type="number" min="0" max="1" step="0.01" />
+                </label>
+                <span id="runtime-policy-hint" class="hint">正在读取运行策略…</span>
+              </div>
+              <div class="compose-actions">
+                <button type="submit" class="primary">开始生成</button>
+                <span id="task-submit-status" class="hint"></span>
+              </div>
+            </form>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <h2>实时任务</h2>
+              <button type="button" class="ghost" id="refresh-tasks-btn">刷新</button>
+            </div>
+            <div id="task-list" class="stack"></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <h2>历史 Runs</h2>
+              <button type="button" class="ghost" id="refresh-runs-btn">刷新</button>
+            </div>
+            <div id="run-list" class="stack"></div>
+          </div>
+        </section>
+
+        <section class="column right">
+          <div class="panel detail-panel">
+            <div class="panel-head">
+              <div>
+                <h2>Run 详情</h2>
+                <p class="hint" id="detail-subtitle">选择左侧任务或历史 run 查看详情</p>
+              </div>
+              <div class="panel-tools">
+                <button type="button" class="ghost" id="expand-all-btn">展开全部</button>
+                <button type="button" class="ghost" id="collapse-all-btn">收起全部</button>
+              </div>
+            </div>
+            <div id="run-detail" class="detail-content">
+              <div class="empty-state">
+                <p>还没有选中的 run。</p>
+                <p>创建新任务后会自动切换到该 run；也可以直接点开左侧历史记录。</p>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

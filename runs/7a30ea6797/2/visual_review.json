@@ -1,9 +1,0 @@
-{
-  "pass": true,
-  "is_present": null,
-  "issues": [],
-  "missing_requirements": [],
-  "recommended_edits": [],
-  "backend": "remote_model",
-  "fallback_reason": null
-}

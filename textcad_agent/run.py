@@ -27,6 +27,7 @@ SINGLE_RUN_STAGE_ORDER = [
     "physics_report",
     "visual_qa",
     "revision_brief",
+    "quality_gate",
     "feedback_merge",
     "decide_next",
 ]
@@ -46,6 +47,7 @@ SINGLE_RUN_STAGE_LABELS = {
     "physics_report": "生成力学报告",
     "visual_qa": "视觉审查",
     "revision_brief": "汇总修订摘要",
+    "quality_gate": "质量门控",
     "feedback_merge": "合并反馈",
     "decide_next": "决定下一步",
 }
@@ -109,6 +111,14 @@ def _result_summary(result: dict[str, Any]) -> str:
         f"status: {result.get('final_status', 'unknown')}",
         f"iteration: {result.get('iteration', 'unknown')}",
     ]
+    if result.get("stop_reason"):
+        lines.append(f"stop_reason: {result['stop_reason']}")
+    if result.get("best_iteration") is not None:
+        lines.append(f"best_iteration: {result['best_iteration']}")
+    if result.get("best_score") is not None:
+        lines.append(f"best_score: {float(result['best_score']):.4f}")
+    if result.get("returned_model_source"):
+        lines.append(f"returned_model_source: {result['returned_model_source']}")
     design_status = result.get("design_status") or {}
     if design_status.get("state"):
         lines.append(f"design_status: {design_status['state']}")

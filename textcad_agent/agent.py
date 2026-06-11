@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import ast
-import base64
 import json
 import os
 import re
@@ -31,6 +29,7 @@ from .nodes import (
     make_materialize_workspace_node,
     make_physics_report_node,
     make_physics_qa_node,
+    make_quality_gate_node,
     make_render_views_node,
     make_revision_brief_node,
     make_solve_fea_node,
@@ -44,16 +43,34 @@ from .prompts import (
     VISUAL_SYSTEM_PROMPT,
 )
 from .state import AgentState, ClarifiedSpec, DesignPayload, DesignStatus, PhysicsReview, RenderConfig, VisualReview
+from .model_io import (
+    PROVIDER_API_KEY_ENV,
+    ModelEndpoint,
+    encode_image_as_data_url as _encode_image_as_data_url,
+    extract_response_token_usage as _extract_response_token_usage,
+    extract_text_content as _extract_text_content,
+    is_qwen_mixed_thinking_model as _is_qwen_mixed_thinking_model,
+    load_design_json as _load_design_json,
+    load_json_payload as _load_json_payload,
+    strip_thinking_blocks as _strip_thinking_blocks,
+    supports_enable_thinking_param as _supports_enable_thinking_param,
+    to_bool_env as _to_bool_env,
+    to_float_env as _to_float_env,
+    to_int as _to_int,
+    to_positive_int_env as _to_positive_int_env,
+)
+from .prompt_builders import (
+    build_clarify_request as _build_clarify_request,
+    build_design_request as _build_design_request,
+    build_engineering_prompt as _build_engineering_prompt,
+    build_physics_report_request as _build_physics_report_request,
+    build_visual_review_request as _build_visual_review_request,
+)
 
 load_dotenv()
 
 ROLE_NAMES = ("clarify", "design", "visual")
 HIGH_RISK_FIELDS: set[str] = set()
-PROVIDER_API_KEY_ENV = {
-    "anthropic": "ANTHROPIC_API_KEY",
-    "azure_openai": "AZURE_OPENAI_API_KEY",
-    "openai": "OPENAI_API_KEY",
-}
 
 
 def _bbox_for_beam_face(length_mm: float, width_mm: float, height_mm: float, x_value: float) -> list[float]:
@@ -70,103 +87,6 @@ def _bbox_for_beam_face(length_mm: float, width_mm: float, height_mm: float, x_v
 def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
     lowered = text.lower()
     return any(keyword in text or keyword in lowered for keyword in keywords)
-
-
-def _to_int(value: str | None) -> int | None:
-    if value in (None, ""):
-        return None
-    try:
-        return int(value)
-    except ValueError:
-        return None
-
-
-def _to_positive_int_env(value: str | None) -> int | None:
-    parsed = _to_int(value)
-    if parsed is None or parsed <= 0:
-        return None
-    return parsed
-
-
-def _to_float_env(value: str | None) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except ValueError:
-        return None
-
-
-def _to_bool_env(value: str | None) -> bool | None:
-    if value in (None, ""):
-        return None
-    lowered = value.strip().lower()
-    if lowered in {"1", "true", "yes", "on"}:
-        return True
-    if lowered in {"0", "false", "no", "off"}:
-        return False
-    return None
-
-
-def _coerce_non_negative_int(value: Any) -> int | None:
-    if value in (None, ""):
-        return None
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return None
-    if parsed < 0:
-        return None
-    return parsed
-
-
-def _normalize_token_usage_payload(payload: Any) -> dict[str, int] | None:
-    if not isinstance(payload, dict):
-        return None
-
-    prompt_tokens = None
-    for key in ("prompt_tokens", "input_tokens", "prompt_token_count", "input_token_count"):
-        prompt_tokens = _coerce_non_negative_int(payload.get(key))
-        if prompt_tokens is not None:
-            break
-
-    completion_tokens = None
-    for key in ("completion_tokens", "output_tokens", "completion_token_count", "output_token_count"):
-        completion_tokens = _coerce_non_negative_int(payload.get(key))
-        if completion_tokens is not None:
-            break
-
-    total_tokens = _coerce_non_negative_int(payload.get("total_tokens"))
-    if total_tokens is None and (prompt_tokens is not None or completion_tokens is not None):
-        total_tokens = (prompt_tokens or 0) + (completion_tokens or 0)
-
-    if prompt_tokens is None and completion_tokens is None and total_tokens is None:
-        return None
-
-    return {
-        "prompt_tokens": prompt_tokens or 0,
-        "completion_tokens": completion_tokens or 0,
-        "total_tokens": total_tokens or 0,
-    }
-
-
-def _extract_response_token_usage(response: Any) -> dict[str, int]:
-    candidates: list[Any] = [getattr(response, "usage_metadata", None)]
-    response_metadata = getattr(response, "response_metadata", None)
-    if isinstance(response_metadata, dict):
-        candidates.extend(
-            [
-                response_metadata.get("token_usage"),
-                response_metadata.get("usage"),
-                response_metadata,
-            ]
-        )
-
-    for candidate in candidates:
-        normalized = _normalize_token_usage_payload(candidate)
-        if normalized is not None:
-            return normalized
-    return {}
 
 
 def _parse_dimensions(prompt: str) -> tuple[float | None, float | None, float | None]:
@@ -203,119 +123,6 @@ def _parse_load_vector(prompt: str) -> list[float] | None:
     return None
 
 
-def _encode_image_as_data_url(path: str) -> str:
-    image_path = Path(path)
-    mime = "image/png"
-    encoded = base64.b64encode(image_path.read_bytes()).decode("utf-8")
-    return f"data:{mime};base64,{encoded}"
-
-
-def _extract_text_content(content: Any) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, dict):
-                item_type = item.get("type")
-                if item_type in {"text", "output_text", "input_text"}:
-                    parts.append(str(item.get("text", "")))
-        return "\n".join(part for part in parts if part).strip()
-    return str(content)
-
-
-_THINKING_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
-
-
-def _strip_thinking_blocks(text: str) -> str:
-    """Remove Qwen3 <think>...</think> reasoning blocks before JSON extraction."""
-    return _THINKING_RE.sub("", text).strip()
-
-
-def _extract_json_fragment(text: str) -> str:
-    fence_match = re.search(r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```", text, flags=re.DOTALL | re.IGNORECASE)
-    if fence_match:
-        return fence_match.group(1).strip()
-
-    start = -1
-    depth = 0
-    in_string = False
-    escape = False
-    opener = ""
-    closer = ""
-    for index, char in enumerate(text):
-        if start == -1 and char in "{[":
-            start = index
-            opener = char
-            closer = "}" if char == "{" else "]"
-            depth = 1
-            continue
-        if start == -1:
-            continue
-        if in_string:
-            if escape:
-                escape = False
-            elif char == "\\":
-                escape = True
-            elif char == '"':
-                in_string = False
-            continue
-        if char == '"':
-            in_string = True
-        elif char == opener:
-            depth += 1
-        elif char == closer:
-            depth -= 1
-            if depth == 0:
-                return text[start : index + 1].strip()
-    return text.strip()
-
-
-def _load_json_payload(text: str) -> Any:
-    candidate = _extract_json_fragment(text)
-    try:
-        return json.loads(candidate)
-    except json.JSONDecodeError:
-        return ast.literal_eval(candidate)
-
-
-_CODE_BLOCK_RE = re.compile(r"```\w*\n(.*?)```", re.DOTALL)
-
-
-def _load_design_json(text: str) -> Any:
-    """Parse JSON from a design model response.
-
-    Tries standard JSON extraction first.  If that fails, falls back to pulling
-    the CadQuery code from a ```python``` fence and any remaining JSON from the
-    rest of the text.  This handles the common Qwen3 output pattern where the
-    code is rendered as a literal code block rather than an escaped JSON string.
-    """
-    try:
-        return _load_json_payload(text)
-    except Exception:
-        pass
-
-    # Fallback: extract code from the first fenced code block.
-    code_match = _CODE_BLOCK_RE.search(text)
-    if not code_match:
-        raise ValueError("No valid JSON or fenced code block found in design response.")
-
-    code = code_match.group(1)
-    remainder = text[: code_match.start()] + text[code_match.end() :]
-    try:
-        data = _load_json_payload(remainder)
-        if isinstance(data, dict):
-            data.setdefault("cadquery_code", code)
-            return data
-    except Exception:
-        pass
-
-    # At minimum, return what we have; _normalize_design_payload fills the rest.
-    return {"cadquery_code": code}
-
-
 def _to_float(value: Any) -> float | None:
     if value is None:
         return None
@@ -349,20 +156,6 @@ def _to_string_list(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item) for item in value if item is not None]
     return [str(value)]
-
-
-def _is_qwen_mixed_thinking_model(model_name: str) -> bool:
-    lowered = model_name.lower()
-    return lowered.startswith("qwen3") or lowered.startswith("qwq")
-
-
-def _supports_enable_thinking_param(model_name: str) -> bool:
-    """Whether model is known to accept the OpenAI-compatible enable_thinking field."""
-    lowered = model_name.lower()
-    # Current DashScope behavior: qwen-vl-* rejects thinking-related params.
-    if "qwen-vl" in lowered or "vl-" in lowered:
-        return False
-    return _is_qwen_mixed_thinking_model(model_name)
 
 
 def _normalize_vector(value: Any) -> list[float] | None:
@@ -615,96 +408,6 @@ def _tray_box_code(backend: dict[str, Any]) -> str:
     )
 
 
-@dataclass(frozen=True)
-class ModelEndpoint:
-    role: str
-    model: str
-    model_provider: str | None = None
-    base_url: str | None = None
-    api_key: str | None = None
-    temperature: float = 0.0
-    configured_via_env: bool = False
-
-    @classmethod
-    def from_env(
-        cls,
-        role: str,
-        default_model: str,
-        default_provider: str | None = None,
-        default_temperature: float = 0.0,
-    ) -> ModelEndpoint:
-        shared_prefix = "TEXTCAD_DEFAULT_"
-        role_prefix = f"TEXTCAD_{role.upper()}_"
-        field_names = ("MODEL", "PROVIDER", "BASE_URL", "API_KEY", "TEMPERATURE")
-
-        def read_env(name: str) -> str | None:
-            role_value = os.getenv(f"{role_prefix}{name}")
-            if role_value is not None:
-                return role_value
-            return os.getenv(f"{shared_prefix}{name}")
-
-        configured_via_env = any(read_env(name) is not None for name in field_names)
-        model_override = read_env("MODEL")
-        provider_override = read_env("PROVIDER")
-        base_url = read_env("BASE_URL") or None
-        api_key = read_env("API_KEY") or None
-        temp_raw = read_env("TEMPERATURE")
-        temperature = default_temperature if temp_raw in (None, "") else float(temp_raw)
-        model = model_override or default_model
-
-        if provider_override:
-            provider = provider_override
-        elif ":" in model:
-            provider = None
-        elif base_url:
-            provider = "openai"
-        elif model_override is None:
-            provider = default_provider
-        else:
-            provider = None
-
-        return cls(
-            role=role,
-            model=model,
-            model_provider=provider,
-            base_url=base_url,
-            api_key=api_key,
-            temperature=temperature,
-            configured_via_env=configured_via_env,
-        )
-
-    def provider_hint(self) -> str | None:
-        if self.model_provider:
-            return self.model_provider
-        if ":" in self.model:
-            return self.model.split(":", 1)[0]
-        return None
-
-    def resolved_api_key(self) -> str | None:
-        if self.api_key:
-            return self.api_key
-        provider = self.provider_hint()
-        if provider is None:
-            return None
-        env_name = PROVIDER_API_KEY_ENV.get(provider)
-        if env_name is None:
-            return None
-        return os.getenv(env_name)
-
-    def cache_key(self) -> str:
-        return json.dumps(
-            {
-                "role": self.role,
-                "model": self.model,
-                "model_provider": self.model_provider,
-                "base_url": self.base_url,
-                "temperature": self.temperature,
-                "has_api_key": bool(self.resolved_api_key()),
-            },
-            sort_keys=True,
-        )
-
-
 @dataclass
 class AgentRuntime:
     displacement_limit_mm: float = 5.0
@@ -865,12 +568,7 @@ class AgentRuntime:
         return [SystemMessage(content=system_prompt), HumanMessage(content=content)]
 
     def build_clarify_request(self, prompt: str, feedback_history: list[str]) -> str:
-        return (
-            f"原始需求：{prompt}\n"
-            f"历史反馈：{feedback_history}\n"
-            f"{self._schema_hint('ClarifiedSpec')}\n"
-            "请先理解自由文本需求，再补全设计意图、尺寸、视觉要求、边界盒、载荷向量和必要假设。"
-        )
+        return _build_clarify_request(prompt, feedback_history, self._schema_hint)
 
     def build_physics_report_request(
         self,
@@ -878,12 +576,7 @@ class AgentRuntime:
         fea_results: dict[str, Any],
         physics_review: dict[str, Any],
     ) -> str:
-        return (
-            f"澄清规格：{clarified_spec}\n"
-            f"有限元摘要：{fea_results}\n"
-            f"物理审查结果：{physics_review}\n"
-            "请输出一段简洁工程报告，用于指导下一轮几何修复。"
-        )
+        return _build_physics_report_request(clarified_spec, fea_results, physics_review)
 
     def build_visual_review_request(
         self,
@@ -891,13 +584,7 @@ class AgentRuntime:
         clarified_spec: dict[str, Any],
         feedback_history: list[str],
     ) -> str:
-        return (
-            f"{self._schema_hint('VisualReview')}\n"
-            "结合原始需求、澄清规格和渲染图，判断几何语义是否满足要求。"
-            f"\n原始需求：{prompt}"
-            f"\n澄清规格：{clarified_spec}"
-            f"\n历史反馈：{feedback_history}"
-        )
+        return _build_visual_review_request(prompt, clarified_spec, feedback_history, self._schema_hint)
 
     def _visual_max_images(self) -> int:
         value = _to_int(os.getenv("TEXTCAD_VISUAL_MAX_IMAGES"))
@@ -939,35 +626,7 @@ class AgentRuntime:
         return selected[: self._visual_max_images()]
 
     def build_engineering_prompt(self, prompt: str, clarified_spec: dict[str, Any]) -> str:
-        spec = dict(clarified_spec)
-        spec.pop("backend_config", None)
-        goals = _to_string_list(spec.get("design_goals"))
-        styles = _to_string_list(spec.get("style_keywords"))
-        assumptions = _to_string_list(spec.get("assumptions"))
-        visual_requirements = _to_string_list(spec.get("visual_requirements"))
-        length_mm = float(spec.get("length_mm") or 0.0)
-        width_mm = float(spec.get("width_mm") or 0.0)
-        height_mm = float(spec.get("height_mm") or 0.0)
-        load_vector = spec.get("load_vector_n") or [0.0, -1.0, 0.0]
-        fixed_boundary = spec.get("fixed_boundary") or []
-        load_boundary = spec.get("load_boundary") or []
-        return (
-            "工程基线说明\n"
-            f"- 原始需求：{prompt}\n"
-            f"- 设计摘要：{spec.get('design_brief') or spec.get('request_summary') or prompt}\n"
-            f"- 对象类型：{spec.get('object_type') or 'generic_printable_object'}\n"
-            f"- 目标尺寸（mm）：长 {length_mm:.2f}，宽 {width_mm:.2f}，高 {height_mm:.2f}\n"
-            f"- 材料：{spec.get('material_name') or 'PLA'}，杨氏模量 {float(spec.get('material_young_mpa') or 3500.0):.2f} MPa，泊松比 {float(spec.get('material_poisson') or 0.36):.2f}\n"
-            f"- 固定边界盒：{fixed_boundary}\n"
-            f"- 加载边界盒：{load_boundary}\n"
-            f"- 试探载荷向量（N）：{load_vector}\n"
-            f"- 设计目标：{'; '.join(goals) if goals else '满足用户核心用途并可打印'}\n"
-            f"- 风格关键词：{', '.join(styles) if styles else 'printable, clean'}\n"
-            f"- 视觉要求：{'; '.join(visual_requirements) if visual_requirements else prompt}\n"
-            f"- 默认假设：{'; '.join(assumptions) if assumptions else '无'}\n"
-            "- 执行说明：以上边界盒、试探载荷和材料参数是当前求解后端的默认分析上下文，不是造型本身的唯一解；若你为了更符合真实物体语义而调整几何，请在 self_check_notes 中说明。\n"
-            "- 约束：必须生成可执行的 CadQuery 代码，几何应可网格化、可渲染、可进入后续力学和视觉审查。\n"
-        )
+        return _build_engineering_prompt(prompt, clarified_spec)
 
     def build_design_request(
         self,
@@ -976,28 +635,19 @@ class AgentRuntime:
         clarified_spec: dict[str, Any],
         latest_revision_brief: str,
         previous_code: str = "",
+        structured_revision: dict[str, Any] | None = None,
+        repair_mode: bool = False,
     ) -> str:
-        sections = [
-            engineering_prompt.strip(),
-            "实现边界与优先级\n"
-            "- 必须输出可执行 CadQuery 代码，并保留 build_model()/build()/make_model() 或 MODEL/model 入口。\n"
-            "- 不要退化成无语义方块，除非用户需求本身就是简单实体。\n"
-            "- 优先保留上一轮已经正确的结构，只修复当前明确指出的问题。\n"
-            "- analysis_config 主要服务当前后端执行；如果你认为几何语义需要微调其中的分析假设，可以调整，但必须在 self_check_notes 里说明原因。\n",
-        ]
-        if previous_code:
-            sections.append(f"上一轮代码\n```python\n{previous_code}\n```")
-        if latest_revision_brief:
-            sections.append(f"本轮修复摘要\n{latest_revision_brief}")
-        else:
-            sections.append(f"本轮修复摘要\n首轮生成，请直接根据工程基线构建满足需求的 3D 打印模型。")
-        sections.append(
-            "输出要求\n"
-            f"{self._schema_hint('DesignPayload')}\n"
-            "self_check_notes 中必须说明本轮修改点、仍未满足项和任何阻碍。\n"
-            f"原始需求参考：{prompt}"
+        _ = clarified_spec
+        return _build_design_request(
+            prompt=prompt,
+            engineering_prompt=engineering_prompt,
+            latest_revision_brief=latest_revision_brief,
+            previous_code=previous_code,
+            structured_revision=structured_revision,
+            repair_mode=repair_mode,
+            schema_hint=self._schema_hint,
         )
-        return "\n\n".join(section.strip() for section in sections if section and section.strip())
 
     def generate_physics_report(
         self,
@@ -1065,6 +715,8 @@ class AgentRuntime:
             "VisualReview": (
                 "只返回一个 json object。"
                 "顶层字段必须使用这些名字："
+                "object_present, object_category_match, semantic_score, geometry_score, printability_score, "
+                "defects, preserve_components, forbidden_repairs, acceptance_decision, "
                 "pass, is_present, issues, missing_requirements, recommended_edits。"
             ),
         }
@@ -1308,6 +960,29 @@ class AgentRuntime:
         if explicit_presence is not None:
             result["is_present"] = explicit_presence
 
+        object_present = _to_bool(payload.get("object_present"))
+        if object_present is None:
+            object_present = _to_bool(payload.get("object_exists"))
+        if object_present is not None:
+            result["object_present"] = object_present
+            if explicit_presence is None:
+                result["is_present"] = object_present
+
+        category_match = _to_bool(payload.get("object_category_match"))
+        if category_match is None:
+            category_match = _to_bool(payload.get("category_match"))
+        if category_match is not None:
+            result["object_category_match"] = category_match
+
+        for score_key in ("semantic_score", "geometry_score", "printability_score"):
+            score_value = _to_float(payload.get(score_key))
+            if score_value is not None:
+                result[score_key] = max(0.0, min(1.0, score_value))
+
+        decision = str(payload.get("acceptance_decision") or "").strip().lower()
+        if decision in {"accept", "repair", "reject"}:
+            result["acceptance_decision"] = decision
+
         checklist_presence: list[bool] = []
         checklist_missing: list[str] = []
         checklist_issues: list[str] = []
@@ -1332,6 +1007,7 @@ class AgentRuntime:
 
         if checklist_presence and explicit_presence is None:
             result["is_present"] = all(checklist_presence)
+            result["object_present"] = all(checklist_presence)
 
         issues = _to_string_list(payload.get("issues"))
         if not issues:
@@ -1370,6 +1046,22 @@ class AgentRuntime:
             recommended_edits = _to_string_list(result.get("recommended_edits"))
 
         revision_feedbacks = payload.get("revision_feedbacks")
+        defects = payload.get("defects")
+        normalized_defects: list[dict[str, Any]] = []
+        if isinstance(defects, list):
+            for item in defects:
+                if not isinstance(item, dict):
+                    continue
+                normalized_defects.append(
+                    {
+                        "component": str(item.get("component") or "unknown"),
+                        "issue": str(item.get("issue") or item.get("defect") or ""),
+                        "severity": int(_to_float(item.get("severity")) or 2),
+                        "repair_action": str(item.get("repair_action") or item.get("geometric_modification") or ""),
+                        "target_parameter": item.get("target_parameter"),
+                        "suggested_change": item.get("suggested_change"),
+                    }
+                )
         if isinstance(revision_feedbacks, list):
             for item in revision_feedbacks:
                 if isinstance(item, dict):
@@ -1383,8 +1075,33 @@ class AgentRuntime:
                     rec = str(item).strip()
                 if rec and rec not in recommended_edits:
                     recommended_edits.append(rec)
+                if rec:
+                    normalized_defects.append(
+                        {
+                            "component": "unknown",
+                            "issue": defect if isinstance(item, dict) else rec,
+                            "severity": 2,
+                            "repair_action": modification if isinstance(item, dict) else rec,
+                            "target_parameter": None,
+                            "suggested_change": None,
+                        }
+                    )
         if recommended_edits:
             result["recommended_edits"] = recommended_edits
+        if normalized_defects:
+            result["defects"] = normalized_defects
+
+        preserve_components = _to_string_list(payload.get("preserve_components"))
+        if not preserve_components:
+            preserve_components = _to_string_list(payload.get("must_preserve"))
+        if preserve_components:
+            result["preserve_components"] = preserve_components
+
+        forbidden_repairs = _to_string_list(payload.get("forbidden_repairs"))
+        if not forbidden_repairs:
+            forbidden_repairs = _to_string_list(payload.get("forbidden_actions"))
+        if forbidden_repairs:
+            result["forbidden_repairs"] = forbidden_repairs
 
         if pass_value is None:
             has_failure_signals = bool(result.get("issues")) or bool(result.get("missing_requirements")) or bool(
@@ -1394,6 +1111,13 @@ class AgentRuntime:
                 result["pass"] = False
             elif result.get("is_present") is not None:
                 result["pass"] = bool(result["is_present"])
+
+        if result.get("pass") is True:
+            result["acceptance_decision"] = "accept"
+        elif result.get("object_present") is False or result.get("object_category_match") is False:
+            result["acceptance_decision"] = "reject"
+        else:
+            result["acceptance_decision"] = "repair"
 
         return result
 
@@ -1567,6 +1291,8 @@ class AgentRuntime:
         *,
         engineering_prompt: str = "",
         latest_revision_brief: str = "",
+        structured_revision: dict[str, Any] | None = None,
+        repair_mode: bool = False,
     ) -> DesignPayload:
         if self.design_fn is not None:
             return self.design_fn(prompt, clarified_spec, feedback_history)
@@ -1581,6 +1307,8 @@ class AgentRuntime:
             clarified_spec=clarified_spec,
             latest_revision_brief=latest_revision_brief,
             previous_code=previous_code,
+            structured_revision=structured_revision,
+            repair_mode=repair_mode,
         )
 
         messages = self._text_messages("design", DESIGN_SYSTEM_PROMPT, prompt_text)
@@ -1611,6 +1339,24 @@ class AgentRuntime:
                     "issues": ["未生成渲染截图。"],
                     "missing_requirements": [],
                     "recommended_edits": ["先修复 STL 导出或 PyVista 渲染，再重新审查。"],
+                    "object_present": False,
+                    "object_category_match": False,
+                    "semantic_score": 0.0,
+                    "geometry_score": 0.0,
+                    "printability_score": 0.0,
+                    "defects": [
+                        {
+                            "component": "render",
+                            "issue": "未生成渲染截图。",
+                            "severity": 3,
+                            "repair_action": "修复 STL 导出或 PyVista 渲染。",
+                            "target_parameter": None,
+                            "suggested_change": None,
+                        }
+                    ],
+                    "preserve_components": [],
+                    "forbidden_repairs": ["不要重写已可编译的主体结构，先修复渲染/导出链路。"],
+                    "acceptance_decision": "reject",
                     "backend": "heuristic_fallback",
                     "fallback_reason": reason,
                 }
@@ -1622,6 +1368,24 @@ class AgentRuntime:
                     "issues": [reason or "远程视觉审查失败，未能获得可靠的多模态审查结果。"],
                     "missing_requirements": [],
                     "recommended_edits": ["修复远程 VLM 调用或输出解析问题后，再重新执行视觉审查。"],
+                    "object_present": True,
+                    "object_category_match": None,
+                    "semantic_score": 0.4,
+                    "geometry_score": 0.4,
+                    "printability_score": 0.4,
+                    "defects": [
+                        {
+                            "component": "visual_qa",
+                            "issue": reason or "远程视觉审查失败。",
+                            "severity": 2,
+                            "repair_action": "修复远程 VLM 调用或输出解析问题。",
+                            "target_parameter": None,
+                            "suggested_change": None,
+                        }
+                    ],
+                    "preserve_components": ["previous_primary_geometry"],
+                    "forbidden_repairs": ["不要因 VLM 暂时失败而从零重写模型。"],
+                    "acceptance_decision": "repair",
                     "backend": "heuristic_fallback",
                     "fallback_reason": reason,
                 }
@@ -1629,6 +1393,16 @@ class AgentRuntime:
         return VisualReview(
             **{
                 "pass": True,
+                "is_present": True,
+                "object_present": True,
+                "object_category_match": True,
+                "semantic_score": 0.75,
+                "geometry_score": 0.75,
+                "printability_score": 0.75,
+                "defects": [],
+                "preserve_components": ["visible_primary_geometry"],
+                "forbidden_repairs": ["不要删除当前可见主体结构。"],
+                "acceptance_decision": "accept",
                 "issues": [],
                 "missing_requirements": [],
                 "recommended_edits": [],
@@ -1745,6 +1519,7 @@ def build_agent(runtime: AgentRuntime | None = None, with_memory: bool = True):
     workflow.add_node("physics_report", make_physics_report_node(runtime), retry_policy=RetryPolicy(max_attempts=3))
     workflow.add_node("visual_qa", make_visual_qa_node(runtime), retry_policy=RetryPolicy(max_attempts=3))
     workflow.add_node("revision_brief", make_revision_brief_node())
+    workflow.add_node("quality_gate", make_quality_gate_node(runtime))
     workflow.add_node("feedback_merge", make_feedback_merge_node())
     workflow.add_node("decide_next", make_decide_next_node(runtime))
 
@@ -1759,7 +1534,8 @@ def build_agent(runtime: AgentRuntime | None = None, with_memory: bool = True):
     workflow.add_edge("physics_qa", "physics_report")
     workflow.add_edge("physics_report", "visual_qa")
     workflow.add_edge("visual_qa", "revision_brief")
-    workflow.add_edge("revision_brief", "feedback_merge")
+    workflow.add_edge("revision_brief", "quality_gate")
+    workflow.add_edge("quality_gate", "feedback_merge")
     workflow.add_edge("feedback_merge", "decide_next")
 
     if with_memory:
@@ -1767,5 +1543,5 @@ def build_agent(runtime: AgentRuntime | None = None, with_memory: bool = True):
     return workflow.compile()
 
 
-def create_agent():
-    return build_agent()
+def create_agent(runtime: AgentRuntime | None = None):
+    return build_agent(runtime=runtime)

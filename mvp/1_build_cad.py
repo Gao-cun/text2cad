@@ -6,7 +6,7 @@ from pathlib import Path
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from mvp.backend import export_cad_artifacts, resolve_workspace
+from textcad_agent.cad_backend import export_cad_artifacts, resolve_workspace
 
 def main() -> None:
     result = export_cad_artifacts(resolve_workspace())

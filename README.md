@@ -95,6 +95,13 @@ TEXTCAD_VISUAL_MAX_PIXELS=1310720
 TEXTCAD_MAX_ITERATIONS=3
 TEXTCAD_BATCH_MAX_WORKERS=4
 
+TEXTCAD_MIN_IMPROVEMENT_DELTA=0.03
+TEXTCAD_MAX_NO_IMPROVEMENT=2
+TEXTCAD_REPAIR_MAX_CHANGE_RATIO=0.60
+TEXTCAD_ENABLE_BEST_SO_FAR=true
+TEXTCAD_ENABLE_CONSERVATIVE_REPAIR=true
+TEXTCAD_ENABLE_STRUCTURED_VISUAL_QA=true
+
 TEXTCAD_DEFAULT_ENABLE_THINKING=false
 TEXTCAD_DEFAULT_THINKING_TIMEOUT_S=1200
 
@@ -110,6 +117,12 @@ TEXTCAD_VISUAL_THINKING_TIMEOUT_S=1200
 
 - `TEXTCAD_MAX_ITERATIONS`：控制 `feedback_merge -> decide_next` 回环最大轮数
 - `TEXTCAD_BATCH_MAX_WORKERS`：`--tasks-file` 并行批任务的默认线程数（可被 `--parallel-workers` 覆盖）
+- `TEXTCAD_MIN_IMPROVEMENT_DELTA`：新一轮质量分数至少高于历史最佳多少才覆盖 best-so-far，默认 0.03
+- `TEXTCAD_MAX_NO_IMPROVEMENT`：连续多少轮无质量提升后提前停止并返回历史最佳，默认 2
+- `TEXTCAD_REPAIR_MAX_CHANGE_RATIO`：Repair Mode 中代码变化比例超过该值时加入 `large_rewrite_in_repair_mode` 惩罚，默认 0.60
+- `TEXTCAD_ENABLE_BEST_SO_FAR`：是否启用历史最佳模型选择，默认 true
+- `TEXTCAD_ENABLE_CONSERVATIVE_REPAIR`：是否让第二轮及以后进入保守修复模式，默认 true
+- `TEXTCAD_ENABLE_STRUCTURED_VISUAL_QA`：是否要求/归一化结构化视觉审查字段，默认 true
 - `*_ENABLE_THINKING`：控制是否向模型透传 `enable_thinking`
 - `*_ENABLE_THINKING=true` 时优先使用 `*_THINKING_TIMEOUT_S`
 - `*_ENABLE_THINKING=true` 且未设置角色级超时时，使用 `TEXTCAD_DEFAULT_THINKING_TIMEOUT_S`
@@ -127,13 +140,17 @@ TEXTCAD_DESIGN_MODEL=anthropic:claude-sonnet-4-5
 ```text
 textcad_agent/
   state.py       # schema 与 LangGraph state
+  model_io.py    # 模型端点、超时/env 策略、响应文本/JSON 解析
+  prompt_builders.py # 澄清、设计、审查 prompt 构造
+  cad_backend.py # CadQuery / Gmsh / SfePy 执行后端
+  fea_problem.py # SfePy 问题定义
   tools.py       # 本地执行工具与运行目录管理
   nodes.py       # graph node 逻辑
-  agent.py       # graph 构建入口
+  agent.py       # graph 构建与运行时编排入口
 mvp/
-  1_build_cad.py
-  2_build_mesh.py
-  3_solve_fea.py
+  1_build_cad.py  # 兼容旧命令的薄封装
+  2_build_mesh.py # 兼容旧命令的薄封装
+  3_solve_fea.py # 兼容旧 SfePy 入口
 runs/
   <run_id>/<iteration>/
 ```
@@ -185,6 +202,27 @@ textcad-run --tasks-file tasks.txt --parallel-workers 4
 textcad-run --json "设计一个带孔支架，要求右端受向下 5N 载荷。"
 ```
 
+Web 控制台适合交互式演示和检查后端结果：
+
+```bash
+conda activate textcad-mvp
+textcad-web --host 127.0.0.1 --port 8765
+```
+
+如果当前环境尚未生成 `textcad-web` console script，可以使用等价模块入口：
+
+```bash
+python -m textcad_agent.web --host 127.0.0.1 --port 8765
+```
+
+若 `8765` 已被占用，Web 服务会自动尝试后续端口，并在终端输出实际访问地址；需要严格绑定指定端口时加 `--strict-port`。
+
+打开终端输出的地址后，可以直接提交自然语言 prompt。页面会先锁定实时任务，展示 LangGraph 当前节点、论文式流程阶段、token、编译/设计状态；当 `runs/<run_id>/` 产物落盘后，会自动切换到 Run 详情，展示 STL 预览、渲染截图、VLM 视觉审查、FEA 力学报告、修订摘要和每轮反馈闭环。若后端已经产生 `run_id` 但工作区尚未写完，页面会显示“等待产物”，而不是空白结果。
+
+澄清策略仍然是“高风险才问”：普通缺省参数会由 Clarify 代理按 3D 打印常识补全；只有尺寸、载荷、材料或边界等字段无法安全推断时，任务会进入 `awaiting_user`。Web API 已预留 `POST /api/tasks/{task_id}/clarification` 用于记录补充参数，后续版本会接入 LangGraph interrupt resume 自动续跑。
+
+本轮 Web 工作台聚焦左侧生产闭环：非专业输入 -> 工程语言转化 -> CadQuery 生成 -> 工具/代码审查 -> VLM + FEA 反馈 -> 有限轮重构。右侧 Math 评测（Chamfer Distance / B-Rep）和 Qwen 微调数据集模块暂不实现，只保留后续扩展入口。
+
 推荐的 provider 切换流程：
 
 ```bash
@@ -234,7 +272,7 @@ textcad-run "设计一个测试梁"
    - 默认会优先自动补全尺寸、支撑语义和试探性分析参数，而不是因为缺少工程字段就打回用户。
 
 3. `engineer_spec`
-   - 把澄清后的规格整理成当前 `mvp/` 后端能消费的 `backend_config`。
+   - 把澄清后的规格整理成包内执行后端能消费的 `backend_config`。
    - 这里会把边界盒进一步转成 `fixed_x / load_x / bbox_tol / load_vector_n` 这类求解配置。
 
 4. `design_generate`
@@ -265,8 +303,8 @@ textcad-run "设计一个测试梁"
      - `clarified_spec.json`
      - `config.py`
    - `build_cad` 执行 CadQuery 代码并导出 `model.step` 与 `model.stl`。
-   - `build_mesh` 复用 `mvp/2_build_mesh.py`，生成 `msh22` 网格。
-   - `solve_fea` 复用 `mvp/3_solve_fea.py`，运行 SfePy，输出 `fea_result.vtk` 并提取最大位移等数值摘要。
+   - `build_mesh` 调用 `textcad_agent.cad_backend` 的 Gmsh 后端，生成 `msh22` 网格。
+   - `solve_fea` 调用 `textcad_agent.cad_backend` / `textcad_agent.fea_problem`，运行 SfePy，输出 `fea_result.vtk` 并提取最大位移等数值摘要。
 
 7. `render_views`
    - 使用 PyVista 读取 `model.stl`，输出固定视角的截图，默认包括：
@@ -312,12 +350,13 @@ textcad-run "设计一个测试梁"
 
 ## 说明
 
-- `mvp/` 仍然是唯一物理执行后端，Agent 层不会覆盖这些文件
+- `textcad_agent.cad_backend` 是当前唯一物理执行后端；`mvp/` 仅保留旧脚本兼容入口
 - `visual_qa` 在无多模态模型时会退回本地 heuristic judge，仅用于流程联调
 - 当前 `physics_qa` 强制使用 `max_disp_mm` 作为 gating 指标；`max_stress_mpa` 保留接口，但底层结果若未提供则不会阻塞流程
+- `textcad_agent.model_io` 集中管理模型端点、API key 环境变量映射、超时/env 解析、Qwen thinking block 清理和 JSON 提取
 - `AgentRuntime` 的模型接入层支持 OpenAI、Anthropic，以及任何 OpenAI-compatible 端点（例如 Qwen/DashScope）
 - `configs/providers/` 提供了 `openai / qwen / hybrid` 三套实验模板，适合做论文中的多模型对比
-- 三个系统级提示词已抽离到 `textcad_agent/prompts/`，便于论文中单独描述 prompt 设计与后续版本管理
+- 三个系统级提示词已抽离到 `textcad_agent/prompts/`，动态请求文本由 `textcad_agent.prompt_builders` 生成，便于论文中单独描述 prompt 设计与后续版本管理
 - 当前结果状态里会额外返回 `engineering_prompt`、`latest_revision_brief`、`physics_report`、`design_status`，方便直接检查第二轮到底收到了什么输入
 
 ## 测试

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import base64
 import shutil
 import subprocess
 import sys
@@ -17,7 +18,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from .state import ClarifiedSpec, DesignPayload, RenderConfig
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-MVP_DIR = REPO_ROOT / "mvp"
 RUNS_ROOT = REPO_ROOT / "runs"
 
 
@@ -125,9 +125,35 @@ def _run_command(
 
 
 def _region_masks(coords: np.ndarray, config_data: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
-    left = coords[:, 0] < (config_data["fixed_x"] + config_data["bbox_tol"])
-    right = coords[:, 0] > (config_data["load_x"] - config_data["bbox_tol"])
+    fixed_x = float(config_data.get("effective_fixed_x", config_data["fixed_x"]))
+    load_x = float(config_data.get("effective_load_x", config_data["load_x"]))
+    bbox_tol = float(config_data["bbox_tol"])
+    if fixed_x <= load_x:
+        left = coords[:, 0] < (fixed_x + bbox_tol)
+        right = coords[:, 0] > (load_x - bbox_tol)
+    else:
+        left = coords[:, 0] > (fixed_x - bbox_tol)
+        right = coords[:, 0] < (load_x + bbox_tol)
     return left, right
+
+
+def _load_effective_analysis_config(workspace: Path) -> dict[str, Any]:
+    config_data = json.loads((workspace / "analysis_config.json").read_text(encoding="utf-8"))
+    metadata_path = workspace / "mesh_boundary_metadata.json"
+    if not metadata_path.exists():
+        return config_data
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return config_data
+    for source_key, target_key in (
+        ("effective_fixed_x", "effective_fixed_x"),
+        ("effective_load_x", "effective_load_x"),
+        ("bbox_tol", "bbox_tol"),
+    ):
+        if source_key in metadata:
+            config_data[target_key] = metadata[source_key]
+    return config_data
 
 
 def _annotate_vtk_regions(vtk_path: Path, config_data: dict[str, Any]) -> pv.DataSet:
@@ -141,7 +167,7 @@ def _annotate_vtk_regions(vtk_path: Path, config_data: dict[str, Any]) -> pv.Dat
 
 def _summarize_vtk(workspace: Path) -> dict[str, Any]:
     vtk_path = workspace / "fea_result.vtk"
-    config_data = json.loads((workspace / "analysis_config.json").read_text(encoding="utf-8"))
+    config_data = _load_effective_analysis_config(workspace)
     mesh = _annotate_vtk_regions(vtk_path, config_data)
     displacement = mesh.point_data["u"]
     coords = mesh.points
@@ -243,7 +269,7 @@ def _build_cad(workspace_path: str) -> dict[str, Any]:
         repo_root = Path({str(REPO_ROOT)!r})
         sys.path.insert(0, str(repo_root))
 
-        from mvp.backend import export_cad_artifacts
+        from textcad_agent.cad_backend import export_cad_artifacts
 
         result = export_cad_artifacts(Path.cwd())
         print(f"Exported STEP: {{result['step_path']}}")
@@ -272,7 +298,7 @@ def _build_mesh(workspace_path: str) -> dict[str, Any]:
         workspace = Path({str(workspace)!r})
         sys.path.insert(0, str(repo_root))
 
-        from mvp.backend import build_mesh_artifacts
+        from textcad_agent.cad_backend import build_mesh_artifacts
 
         result = build_mesh_artifacts(workspace)
         print(f"Exported mesh: {{result['msh_path']}}")
@@ -307,7 +333,7 @@ def _solve_fea(workspace_path: str) -> dict[str, Any]:
         workspace = Path({str(workspace)!r})
         sys.path.insert(0, str(repo_root))
 
-        from mvp.backend import run_fea_artifacts
+        from textcad_agent.cad_backend import run_fea_artifacts
 
         result = run_fea_artifacts(workspace, output_base={str(output_base)!r})
         print(f"Exported FEA VTK: {{result['vtk_path']}}")
@@ -332,7 +358,44 @@ def _camera_vector(view_name: str) -> tuple[float, float, float]:
     return vectors.get(view_name, (1.0, 1.0, 1.0))
 
 
-def _render_views(workspace_path: str, render_config: dict[str, Any]) -> dict[str, Any]:
+def _write_fallback_render_images(workspace: Path, render: RenderConfig, reason: str) -> dict[str, Any]:
+    render_dir = workspace / "renders"
+    render_dir.mkdir(parents=True, exist_ok=True)
+    image_paths: list[str] = []
+    try:
+        from PIL import Image, ImageDraw
+
+        for view in render.views:
+            image = Image.new("RGB", (render.image_width, render.image_height), color=(246, 248, 250))
+            draw = ImageDraw.Draw(image)
+            draw.rectangle((24, 24, render.image_width - 24, render.image_height - 24), outline=(170, 180, 190), width=2)
+            draw.text((40, 42), f"TextCAD render fallback: {view}", fill=(20, 31, 43))
+            draw.text((40, 72), reason[:220], fill=(92, 103, 115))
+            image_path = render_dir / f"{view}.png"
+            image.save(image_path)
+            image_paths.append(str(image_path))
+    except Exception:
+        fallback_png = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP48OEDAAQCAgGX5lN8AAAAAElFTkSuQmCC"
+        )
+        for view in render.views:
+            image_path = render_dir / f"{view}.png"
+            image_path.write_bytes(fallback_png)
+            image_paths.append(str(image_path))
+
+    (render_dir / "render_scale.json").write_text(
+        json.dumps({"bounds": [], "dimensions_mm": {}, "fallback_reason": reason}, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return {
+        "image_paths": image_paths,
+        "dimensions_mm": {},
+        "scale_metadata_path": str(render_dir / "render_scale.json"),
+        "render_fallback_reason": reason,
+    }
+
+
+def _render_views_in_process(workspace_path: str, render_config: dict[str, Any]) -> dict[str, Any]:
     workspace = Path(workspace_path)
     render = RenderConfig.model_validate(render_config)
     stl_path = workspace / "model.stl"
@@ -389,6 +452,35 @@ def _render_views(workspace_path: str, render_config: dict[str, Any]) -> dict[st
     }
 
 
+def _render_views(workspace_path: str, render_config: dict[str, Any]) -> dict[str, Any]:
+    workspace = Path(workspace_path)
+    render = RenderConfig.model_validate(render_config)
+    script = textwrap.dedent(
+        f"""
+        import json
+        import sys
+        from pathlib import Path
+
+        repo_root = Path({str(REPO_ROOT)!r})
+        sys.path.insert(0, str(repo_root))
+
+        from textcad_agent.tools import _render_views_in_process
+
+        result = _render_views_in_process({str(workspace)!r}, {render.model_dump()!r})
+        print(json.dumps(result, ensure_ascii=False))
+        """
+    )
+    try:
+        result = _run_command([sys.executable, "-c", script], cwd=workspace)
+        lines = [line for line in result["stdout"].splitlines() if line.strip()]
+        payload = json.loads(lines[-1]) if lines else {}
+        if not isinstance(payload, dict):
+            raise RuntimeError("render subprocess returned a non-object payload")
+        return {**payload, **result}
+    except Exception as exc:
+        return _write_fallback_render_images(workspace, render, f"PyVista render subprocess failed: {exc}")
+
+
 materialize_workspace = tool(
     "materialize_workspace",
     args_schema=MaterializeWorkspaceInput,
@@ -410,13 +502,13 @@ build_cad = tool(
 build_mesh = tool(
     "build_mesh",
     args_schema=WorkspacePathInput,
-    description="Reuse the MVP gmsh backend to create an msh22 mesh.",
+    description="Build a Gmsh msh22 mesh from the exported STEP artifact.",
 )(_build_mesh)
 
 solve_fea = tool(
     "solve_fea",
     args_schema=WorkspacePathInput,
-    description="Reuse the MVP SfePy backend and summarize VTK displacement outputs.",
+    description="Run the SfePy backend and summarize VTK displacement outputs.",
 )(_solve_fea)
 
 render_views = tool(
